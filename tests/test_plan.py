@@ -317,19 +317,32 @@ class AITests(Fixture):
 
 class FakeGoogle:
     def __init__(self):
-        self.events, self.calls, self.fail = {}, [], False
+        self.events, self.calls, self.fail, self.deleted = {}, [], False, set()
 
     def request(self, method, path, body=None):
+        from urllib.parse import urlsplit,parse_qs
         self.calls.append((method, path, body))
         if self.fail:
             return 503, None
         if path == "/calendars":
             return 200, {"id": "test@example.com"}
-        event_id = body["id"]
-        if method == "PUT" and event_id not in self.events:
-            return 404, None
-        self.events[event_id] = body
-        return (201 if method == "POST" else 200), body
+        parsed=urlsplit(path);query=parse_qs(parsed.query)
+        event_id=parsed.path.split("/events/",1)[1] if "/events/" in parsed.path else None
+        if method=="GET":
+            if query.get("fields")==["accessRole"]:return 200,{"accessRole":"writer"}
+            if event_id:
+                return (200,self.events[event_id]) if event_id in self.events else ((410,None) if event_id in self.deleted else (404,None))
+            return 200,{"items":list(self.events.values())}
+        if method=="DELETE":
+            if event_id not in self.events:return (410 if event_id in self.deleted else 404),None
+            del self.events[event_id];self.deleted.add(event_id);return 204,None
+        event_id=body["id"]
+        if method=="POST" and (event_id in self.events or event_id in self.deleted):return 409,None
+        if method=="PUT":
+            if event_id in self.deleted:return 410,None
+            if event_id not in self.events:return 404,None
+        self.events[event_id]=body
+        return (201 if method=="POST" else 200),body
 
 
 class CalendarTests(Fixture):
@@ -340,20 +353,24 @@ class CalendarTests(Fixture):
         self.sync.connect()
 
     def test_sync_is_idempotent_and_uses_after_school_times(self):
-        self.assertEqual(self.sync.sync(horizon=2), 4)
-        self.assertEqual(self.sync.sync(horizon=2), 0)
-        event = self.sync.event("c1", self.start)
-        self.assertEqual(event["start"]["dateTime"], "2026-11-23T15:00:00-08:00")
-        self.assertEqual(event["end"]["dateTime"], "2026-11-24T15:00:00-08:00")
-
-    def test_confirmed_change_updates_same_event_only_for_selected_child(self):
-        self.sync.sync(horizon=2)
-        before = self.sync.event("c1", self.start)["id"]
-        request = self.draft()
-        self.plan.confirm(42, request["id"])
         self.assertEqual(self.sync.sync(horizon=2), 1)
-        self.assertEqual(self.sync.event("c1", self.start)["id"], before)
-        self.assertEqual(len(self.client.events), 4)
+        self.assertEqual(self.sync.sync(horizon=2), 0)
+        event = next(iter(self.client.events.values()))
+        self.assertEqual(event["summary"], "Older and Younger with First")
+        self.assertEqual(event["start"]["dateTime"], "2026-11-23T15:00:00-08:00")
+        self.assertEqual(event["end"]["dateTime"], "2026-11-30T15:00:00-08:00")
+
+    def test_confirmed_split_replaces_shared_period_and_keeps_other_child(self):
+        self.sync.sync(horizon=2)
+        shared = next(iter(self.client.events))
+        self.plan.confirm(42, self.draft()["id"])
+        self.assertEqual(self.sync.sync(horizon=2), 4)
+        self.assertNotIn(shared,self.client.events)
+        self.assertEqual(len(self.client.events),3)
+        younger=[e for e in self.client.events.values() if e["extendedProperties"]["private"]["children"]=="c2"]
+        self.assertEqual(younger[0]["summary"],"Younger with First")
+        self.assertEqual(younger[0]["end"]["dateTime"],"2026-11-30T15:00:00-08:00")
+        self.assertEqual(self.sync.sync(horizon=2),0)
 
     def test_calendar_failure_preserves_confirmation_and_retries(self):
         request = self.draft()
@@ -363,12 +380,16 @@ class CalendarTests(Fixture):
             self.sync.sync(horizon=1)
         self.assertEqual(self.plan.request(request["id"])["status"], "confirmed")
         self.client.fail = False
-        self.assertEqual(self.sync.sync(horizon=1), 2)
+        self.assertEqual(self.sync.sync(horizon=1),2)
 
-    def test_changes_beyond_horizon_are_included(self):
-        request = self.draft(day=self.start + timedelta(days=100))
-        self.plan.confirm(42, request["id"])
-        self.assertEqual(self.sync.sync(horizon=1), 3)
+    def test_changes_beyond_horizon_are_included_as_full_periods(self):
+        target=self.start+timedelta(days=100)
+        self.plan.confirm(42,self.draft(day=target)["id"])
+        self.sync.sync(horizon=1)
+        matching=[event for event in self.client.events.values() if "c1" in event["extendedProperties"]["private"]["children"].split(",")
+                  and event["start"]["dateTime"][:10]<=target.isoformat()<event["end"]["dateTime"][:10]]
+        self.assertEqual(len(matching),1)
+        self.assertIn("Second",matching[0]["summary"])
 
 
 if __name__ == "__main__":

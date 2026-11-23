@@ -199,12 +199,17 @@ class CycleCalendarTests(Fixture):
     def test_future_cycle_projects_beyond_rolling_horizon(self):
         request = self.plan.draft_actions(42, [cycle("2027-01-25")])
         self.plan.confirm(42, request["id"])
-        self.assertEqual(self.sync.sync(horizon=2), 8)
+        self.sync.sync(horizon=2)
+        matching=[e for e in self.client.events.values() if e["start"]["dateTime"][:10]<= "2027-01-25" <e["end"]["dateTime"][:10]]
+        self.assertTrue(matching)
+        self.assertTrue(all(e["extendedProperties"]["private"]["children"]=="c1,c2" for e in matching))
 
     def test_new_cycle_updates_already_cached_future_events(self):
         self.sync.sync(horizon=90)
         request = self.plan.draft_actions(42, [cycle("2027-01-25")])
         self.plan.confirm(42, request["id"])
         self.sync.sync(horizon=1)
-        event_id = self.sync.event("c1", date(2027, 2, 1))["id"]
-        self.assertIn("Second", self.client.events[event_id]["summary"])
+        matching=[e for e in self.client.events.values() if "c1" in e["extendedProperties"]["private"]["children"].split(",")
+                  and e["start"]["dateTime"][:10]<= "2027-02-01" <e["end"]["dateTime"][:10]]
+        self.assertEqual(len(matching),1)
+        self.assertIn("Second",matching[0]["summary"])

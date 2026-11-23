@@ -187,6 +187,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS invite_attempts (
                 actor INTEGER PRIMARY KEY, window_start TEXT NOT NULL, failures INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS calendar_period_cache (
+                period_key TEXT PRIMARY KEY, event_id TEXT UNIQUE NOT NULL, signature TEXT NOT NULL,
+                start TEXT NOT NULL, end TEXT NOT NULL, children TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS calendar_cache (
                 key TEXT PRIMARY KEY, signature TEXT NOT NULL
             );

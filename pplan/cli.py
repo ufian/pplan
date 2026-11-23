@@ -70,15 +70,13 @@ def main():
             if os.environ.get("PPLAN_AI_ENABLED", "false").lower() != "true":
                 ai_url = None
             calendar = None
-            token_path = Path(os.environ.get("GOOGLE_TOKEN_PATH", "data/google-token.json"))
-            if token_path.exists() and store.get("google_calendar_id"):
-                from pplan.calendar import CalendarSync, GoogleClient
-                calendar = CalendarSync(plan, GoogleClient(token_path))
+            from pplan.calendar import CalendarSync, configured_google_client, google_credentials_available
+            if google_credentials_available() and store.get("google_calendar_id"):
+                calendar = CalendarSync(plan, configured_google_client())
             Bot(plan, TelegramClient(token), AIClient(ai_url) if ai_url else None).run(calendar)
         else:
-            from pplan.calendar import CalendarSync, GoogleClient
-            token_path = os.environ.get("GOOGLE_TOKEN_PATH", "data/google-token.json")
-            calendar = CalendarSync(plan, GoogleClient(token_path))
+            from pplan.calendar import CalendarSync, configured_google_client
+            calendar = CalendarSync(plan, configured_google_client())
             if args.command == "calendar-connect":
                 print("Connected calendar: " + calendar.connect())
             else:

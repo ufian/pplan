@@ -13,7 +13,7 @@ Each child has an independent assignment. A handover date labels the period from
 - Exact previews with children, parent, date range, times, and timezone; changes apply only after **your** confirmation.
 - Multiple periods and repeating rules from one message, with one atomic confirmation for the full action list.
 - Clarification history, cancellation, preview expiry, stale-preview rejection, duplicate-update protection, and an audit trail.
-- One-way Google Calendar sync with a separate timed event for each child and handover period.
+- One-way Google Calendar sync with one timed event per continuous parenting period, combining matching child schedules.
 - Docker Compose deployment on a NAS, persistent SQLite storage, health checks, and durable Telegram replies.
 - A private Telegram Mini App with month navigation, child filters, handover details, editable special-event annotations, and night totals.
 
@@ -101,7 +101,7 @@ Follow the displayed URL and device code in your browser. [Device code authentic
 
 ## Google Calendar
 
-See [Google Calendar setup](docs/google-calendar.md). OAuth setup is optional; scheduling works locally without it. The application creates a dedicated secondary calendar and uses Google's `calendar.app.created` scope. Calendar edits are not imported into the plan.
+See [Google Calendar setup](docs/google-calendar.md). Google setup is optional; scheduling works locally without it. A service account can sync to one existing calendar explicitly shared with it, using `calendar.events` and a fixed Calendar ID. User OAuth remains available to create a dedicated secondary calendar with `calendar.app.created`. Calendar edits are not imported into the plan.
 
 ## Design and next steps
 
