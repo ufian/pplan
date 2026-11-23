@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!pyproject.toml
+!pplan/
+!pplan/**
+pplan/__pycache__/

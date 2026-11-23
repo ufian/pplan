@@ -1,0 +1,10 @@
+# Optional: use with -f compose.yaml -f compose.dev.yaml for NAS development.
+# Restart services after source changes; dependency updates still need an image build.
+services:
+  bot:
+    volumes:
+      - ./pplan:/app/pplan:ro
+      - ./tests:/app/tests:ro
+  ai:
+    volumes:
+      - ./pplan:/app/pplan:ro
