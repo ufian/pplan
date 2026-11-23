@@ -95,15 +95,17 @@ class CalendarEditingTests(Fixture):
                          {"c1": {"p1": 1, "p2": 0}, "c2": {"p1": 1, "p2": 0}})
         with patch.object(ImageDraw.ImageDraw, "text", autospec=True) as draw_text:
             render_calendar(self.plan, december_31, january_3)
-        labels = [call.args[2] for call in draw_text.call_args_list]
-        requested = labels.index("Scheduled nights · Requested period")
-        year = labels.index("Scheduled nights · Since January 1")
+        positions, labels = zip(*[(call.args[1], call.args[2]) for call in draw_text.call_args_list])
+        requested = labels.index("Requested period")
+        year = labels.index("Since January 1")
         self.assertLess(requested, year)
-        self.assertEqual(labels[requested + 1], "December 31, 2026 through January 3, 2027")
-        self.assertEqual(labels[year + 1], "January 1 through January 3, 2027")
-        self.assertIn("4 nights", labels[requested:year])
-        self.assertNotIn("4 nights", labels[year:])
-        self.assertIn("2 nights", labels[year:])
+        self.assertLess(positions[requested][0], positions[year][0])
+        self.assertEqual(positions[requested][1], positions[year][1])
+        self.assertEqual(labels[requested + 1], "26-12-31 → 27-1-3")
+        self.assertEqual(labels[year + 1], "27-1-1 → 27-1-3")
+        self.assertIn("4", labels[requested:year])
+        self.assertNotIn("4", labels[year:])
+        self.assertIn("2", labels[year:])
 
     def test_overwrite_pins_matching_day_and_survives_new_cycle(self):
         action = dict(assign("2026-11-24", "2026-11-24", "p1", ["c1"]), type="overwrite")

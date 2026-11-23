@@ -12,9 +12,9 @@ WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 COLORS = (("#17695e", "#e3f3ed"), ("#ad4c32", "#fcebe2"))
 SPECIAL_COLOR = "#7845a6"
 MAX_CALENDAR_DAYS = 700
-NIGHTS_BLOCK_HEIGHT = 220
+NIGHTS_BLOCK_HEIGHT = 254
 NIGHTS_BLOCK_GAP = 16
-NIGHTS_SECTION_HEIGHT = 2 * NIGHTS_BLOCK_HEIGHT + NIGHTS_BLOCK_GAP + 24
+NIGHTS_SECTION_HEIGHT = NIGHTS_BLOCK_HEIGHT + 74
 
 
 def default_calendar_range(today):
@@ -41,19 +41,12 @@ def calendar_pages(start, end):
     return pages
 
 
-def calendar_bounds(start, end):
-    pages = calendar_pages(start, end)
-    return pages[0][1][0][0], pages[-1][1][-1][-1]
-
-
 def date_range_label(start, end):
-    end_label = f"{MONTHS[end.month]} {end.day}, {end.year}"
+    end_label = f"{end.year % 100:02d}-{end.month}-{end.day}"
     if start == end:
         return end_label
-    start_label = f"{MONTHS[start.month]} {start.day}"
-    if start.year != end.year:
-        start_label += f", {start.year}"
-    return f"{start_label} through {end_label}"
+    start_label = f"{start.year % 100:02d}-{start.month}-{start.day}"
+    return f"{start_label} → {end_label}"
 
 
 def night_count_periods(start, end):
@@ -227,29 +220,30 @@ def render_calendar(plan, start: date, end: date):
         label(margin, notes_bottom - 36, "Purple frames mark special events.", 21, SPECIAL_COLOR)
 
     summary_width = width - 2 * margin
-    child_width = (summary_width - 56) // 2
-    parent_width = (child_width - 12) // 2
+    label(margin, notes_bottom, "Scheduled nights by child", 36, bold=True)
+    block_width = (summary_width - NIGHTS_BLOCK_GAP) // 2
+    column_width = (block_width - 36) // 3
+    block_top = notes_bottom + 50
     for index, (period_name, period_start, period_end) in enumerate(night_count_periods(start, end)):
         totals = plan.overnight_totals(period_start, period_end)
-        block_top = notes_bottom + index * (NIGHTS_BLOCK_HEIGHT + NIGHTS_BLOCK_GAP)
-        draw.rounded_rectangle((margin, block_top, width - margin, block_top + NIGHTS_BLOCK_HEIGHT),
+        block_x = margin + index * (block_width + NIGHTS_BLOCK_GAP)
+        content_x = block_x + 18
+        draw.rounded_rectangle((block_x, block_top, block_x + block_width, block_top + NIGHTS_BLOCK_HEIGHT),
                                radius=16, fill="#ffffff", outline="#dfe7ec", width=2)
-        label(margin + 18, block_top + 12, f"Scheduled nights · {period_name}", 34, bold=True)
-        label(margin + 18, block_top + 53, date_range_label(period_start, period_end),
-              25, "#3f5360", max_width=summary_width - 36)
+        label(content_x, block_top + 12, period_name, 32, bold=True)
+        label(content_x, block_top + 51, date_range_label(period_start, period_end), 25, "#3f5360")
+        for parent_index, (parent, parent_name) in enumerate(plan.config.parents.items(), 1):
+            parent_x = content_x + parent_index * column_width
+            color, fill = parent_colors[parent]
+            draw.rounded_rectangle((parent_x, block_top + 93, parent_x + column_width - 8, block_top + 236),
+                                   radius=10, fill=fill)
+            label(parent_x + 10, block_top + 103, parent_name, 23, color, bold=True, max_width=column_width - 28)
         for child_index, (child, child_name) in enumerate(plan.config.children.items()):
-            child_x = margin + 18 + child_index * (child_width + 20)
-            label(child_x, block_top + 91, child_name, 27, bold=True, max_width=child_width)
-            for parent_index, (parent, parent_name) in enumerate(plan.config.parents.items()):
-                parent_x = child_x + parent_index * (parent_width + 12)
-                color, fill = parent_colors[parent]
-                draw.rounded_rectangle((parent_x, block_top + 131, parent_x + parent_width, block_top + 202),
-                                       radius=10, fill=fill)
-                label(parent_x + 12, block_top + 135, parent_name, 22, color, bold=True, max_width=parent_width - 24)
-                count = totals[child][parent]
-                unit = "night" if count == 1 else "nights"
-                label(parent_x + 12, block_top + 161, f"{count} {unit}", 32, color, bold=True,
-                      max_width=parent_width - 24)
+            row_y = block_top + 137 + child_index * 48
+            label(content_x, row_y + 5, child_name, 24, bold=True, max_width=column_width - 12)
+            for parent_index, parent in enumerate(plan.config.parents, 1):
+                x = content_x + parent_index * column_width + 10
+                label(x, row_y, str(totals[child][parent]), 32, parent_colors[parent][0], bold=True)
     output = BytesIO()
     image.save(output, format="PNG", optimize=True)
     return output.getvalue()

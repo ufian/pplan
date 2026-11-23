@@ -69,37 +69,12 @@ class Bot:
             self.store.enqueue({"method": "sendMessage", "payload": payload})
 
     def show_schedule(self, chat, start, end):
-        from pplan.calendar_image import WEEKDAYS, calendar_bounds, date_range_label, night_count_periods, render_calendar
+        from pplan.calendar_image import render_calendar
+
         png = render_calendar(self.plan, start, end)
-        visible_start, visible_end = calendar_bounds(start, end)
-        config = self.plan.config
-        times = {*config.school_handover_times.values(), config.non_school_handover_time}
-        if len(times) == 1:
-            handovers = f"Handover: {next(iter(times))} every day."
-        else:
-            handovers = "School days: " + ", ".join(f"{WEEKDAYS[int(day)]} {value}" for day, value in sorted(config.school_handover_times.items()))
-            handovers += f"; non-school days: {config.non_school_handover_time}."
-        caption = (f"{visible_start} through {visible_end} · {config.timezone}\n{handovers}\n"
-                   "Split colors show the parent before handover on the left and after handover on the right. Children are listed only when their assignments differ.")
-        if not config.handover_confirmed:
-            caption += "\nSetup pending: displayed times are examples, not confirmed handover times."
-        summary = []
-        for name, period_start, period_end in night_count_periods(start, end):
-            totals = self.plan.overnight_totals(period_start, period_end)
-            block = [f"Scheduled nights · {name}", date_range_label(period_start, period_end)]
-            for child, child_name in config.children.items():
-                counts = ", ".join(f"{config.parents[parent]} {count}" for parent, count in totals[child].items())
-                block.append(f"{child_name}: {counts}")
-            summary.append("\n".join(block))
-        summary_text = "\n\n".join(summary)
-        full_caption = f"{caption}\n\n{summary_text}"
-        summary_fits = len(full_caption.encode("utf-16-le")) <= 2048
         self.store.enqueue({"method": "sendPhoto", "payload": {
-            "chat_id": chat, "caption": full_caption if summary_fits else caption,
-            "photo_base64": base64.b64encode(png).decode(),
+            "chat_id": chat, "photo_base64": base64.b64encode(png).decode(),
         }})
-        if not summary_fits:
-            self.say(chat, summary_text)
 
     def preview(self, chat, request):
         config = self.plan.config

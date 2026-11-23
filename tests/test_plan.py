@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from pplan.ai import CodexInterpreter, context_for, validate_result
 from pplan.calendar import CalendarSync
-from pplan.calendar_image import assignments_for_day, calendar_bounds, calendar_pages, default_calendar_range, render_calendar
+from pplan.calendar_image import assignments_for_day, calendar_pages, default_calendar_range, render_calendar
 from pplan.core import Config, Plan, PlanError, Store
 from pplan.parser import parse_request
 from pplan.telegram import Bot, TelegramClient
@@ -210,8 +210,8 @@ class BotTests(Fixture):
 class ImageTests(Fixture):
     def test_default_calendar_fills_all_visible_dates_and_starts_at_current_week(self):
         start, end = default_calendar_range(self.plan.today())
-        self.assertEqual(calendar_bounds(start, end), (date(2026, 11, 16), date(2027, 1, 3)))
         visible = [day for _, weeks in calendar_pages(start, end) for week in weeks for day in week]
+        self.assertEqual((visible[0], visible[-1]), (date(2026, 11, 16), date(2027, 1, 3)))
         self.assertEqual(len(visible), len(set(visible)))
         with patch.object(self.plan, "assignment", wraps=self.plan.assignment) as assignment:
             render_calendar(self.plan, start, end)
@@ -268,24 +268,20 @@ class ImageTests(Fixture):
         jobs = [json.loads(row[0]) for row in self.store.db.execute("SELECT payload FROM outbox")]
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["method"], "sendPhoto")
-        caption = jobs[0]["payload"]["caption"]
-        self.assertIn("Scheduled nights · Requested period\nNovember 24 through November 25, 2026\n"
-                      "Older: First 2, Second 0\nYounger: First 2, Second 0", caption)
-        self.assertIn("Scheduled nights · Since January 1\nJanuary 1 through November 25, 2026\n"
-                      "Older: First 3, Second 0\nYounger: First 3, Second 0", caption)
+        self.assertNotIn("caption", jobs[0]["payload"])
         self.assertTrue(base64.b64decode(jobs[0]["payload"]["photo_base64"]).startswith(b"\x89PNG"))
 
-    def test_photo_upload_contains_binary_png_and_caption(self):
+    def test_photo_upload_contains_binary_png_without_caption(self):
         png = b"\x89PNG\r\n\x1a\nexample"
         def transport(request, timeout):
             self.assertIn("multipart/form-data", request.get_header("Content-type"))
             self.assertIn(png, request.data)
             self.assertIn(b'name="photo"; filename="schedule.png"', request.data)
-            self.assertIn(b"Calendar caption", request.data)
+            self.assertNotIn(b'name="caption"', request.data)
             return BytesIO(b'{"ok":true,"result":{"message_id":1}}')
         with patch("pplan.telegram.urlopen", transport):
             result = TelegramClient("123:test").call("sendPhoto", {
-                "chat_id": 42, "caption": "Calendar caption", "photo_base64": base64.b64encode(png).decode(),
+                "chat_id": 42, "photo_base64": base64.b64encode(png).decode(),
             })
         self.assertEqual(result["message_id"], 1)
 
