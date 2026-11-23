@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 
 from pplan.core import PlanError
-from pplan.colors import BY_ID, DEFAULT_SPECIAL, PARENT_IDS
+from pplan.colors import BY_ID, DEFAULT_SPECIAL, PARENT_IDS, plan_parent_palette
 
 MONTHS = ("", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
@@ -128,7 +128,7 @@ def render_calendar(plan, start: date, end: date):
     times = {*plan.config.school_handover_times.values(), plan.config.non_school_handover_time}
     time_note = f"   ·   Handover {next(iter(times))}" if len(times) == 1 and plan.config.handover_confirmed else ""
     label(margin, 77, f"{visible_start.isoformat()}  →  {visible_end.isoformat()}{time_note}", 22, color="#3f5360", max_width=width - margin * 2)
-    parent_colors = {parent: COLORS[index] for index, parent in enumerate(plan.config.parents)}
+    parent_colors = {parent: ("#162d3d", color["color"]) for parent, color in plan_parent_palette(plan).items()}
     legend_width = (width - margin * 2 - 18) // 2
     for index, (parent, name) in enumerate(plan.config.parents.items()):
         x = margin + index * (legend_width + 18)

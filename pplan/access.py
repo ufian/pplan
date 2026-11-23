@@ -35,14 +35,18 @@ def authorize(plan, actor):
 
 def parent_for_actor(plan, actor):
     authorize(plan, actor)
-    return plan.config.operator_parent_id if actor == plan.config.operator_telegram_id else member(plan, actor)["parent_id"]
+    if actor == plan.config.operator_telegram_id:
+        parent = plan.config.operator_parent_id or plan.store.get("operator_parent_id")
+        return parent if parent in plan.config.parents else None
+    return member(plan, actor)["parent_id"]
 
 
 def create_invite(plan, actor, parent_id=None):
     authorize_owner(plan, actor)
-    if parent_id is None and plan.config.operator_parent_id:
-        parent_id = next(p for p in plan.config.parents if p != plan.config.operator_parent_id)
-    if parent_id not in plan.config.parents or parent_id == plan.config.operator_parent_id:
+    owner_parent = parent_for_actor(plan, actor)
+    if parent_id is None and owner_parent:
+        parent_id = next(p for p in plan.config.parents if p != owner_parent)
+    if parent_id not in plan.config.parents or parent_id == owner_parent:
         raise PlanError("Choose the second parent's configured name or ID with /invite <parent>.")
     raw = "".join(secrets.choice(ALPHABET) for _ in range(16))
     now = plan.clock()
@@ -81,7 +85,7 @@ def redeem_invite(plan, actor, code):
                 result = {**existing, "new": False}
             elif (invite and not invite["used"] and not invite["revoked"] and now < datetime.fromisoformat(invite["expires"])
                   and not plan.store.db.execute("SELECT 1 FROM family_members WHERE revoked IS NULL").fetchone()
-                  and invite["parent_id"] in plan.config.parents and invite["parent_id"] != plan.config.operator_parent_id):
+                  and invite["parent_id"] in plan.config.parents and invite["parent_id"] != parent_for_actor(plan, plan.config.operator_telegram_id)):
                 plan.store.db.execute("INSERT INTO family_members(telegram_id,parent_id,joined,revoked) VALUES(?,?,?,NULL) "
                                       "ON CONFLICT(telegram_id) DO UPDATE SET parent_id=excluded.parent_id,joined=excluded.joined,revoked=NULL",
                                       (actor, invite["parent_id"], now.isoformat()))

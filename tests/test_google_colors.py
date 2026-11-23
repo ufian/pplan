@@ -117,3 +117,62 @@ class GoogleColorTests(Fixture):
             store=Store(path)
             try:self.assertEqual(store.get("calendar_dirty"),"1")
             finally:store.close()
+
+
+    def selected_parent_colors(self):
+        return {"p1":{"color":"#039be5","label_id":"11111111-1111-4111-8111-111111111111"},
+                "p2":{"color":"#b39ddb","label_id":"22222222-2222-4222-8222-222222222222"}}
+
+    def test_adopted_google_labels_are_shared_by_app_images_and_future_periods(self):
+        from io import BytesIO
+        from PIL import Image, ImageColor
+        from pplan.colors import set_parent_palette, plan_parent_palette
+        from pplan.calendar_image import render_calendar, image_layout, calendar_pages
+        selected=self.selected_parent_colors()
+        self.sync.sync(horizon=14)
+        old=set(self.client.events)
+        pending=self.draft()
+        fingerprint=self.config.fingerprint()
+        schedule=self.plan.schedule(self.start,date(2026,12,6))
+        versions=self.store.db.execute("SELECT count(*) FROM plan_versions").fetchone()[0]
+        self.assertTrue(set_parent_palette(self.plan,42,selected))
+        self.assertFalse(set_parent_palette(self.plan,42,selected))
+        self.assertEqual(plan_parent_palette(self.plan),selected)
+        data=calendar_data(self.plan,"2026-11")
+        self.assertEqual(data["parent_colors"],{p:v["color"] for p,v in selected.items()})
+        x,y,_,_=image_layout(calendar_pages(self.start,date(2026,11,29)))["panels"][0]
+        with Image.open(BytesIO(render_calendar(self.plan,self.start,date(2026,11,29)))) as image:
+            self.assertEqual(image.getpixel((x+120,y+88+55)),ImageColor.getrgb("#039be5"))
+        self.sync.sync(horizon=14)
+        self.assertEqual(set(self.client.events),old)
+        self.assertEqual({e.get("eventLabelId") for e in self.client.events.values()},{v["label_id"] for v in selected.values()})
+        self.assertTrue(all("colorId" not in e for e in self.client.events.values()))
+        writes=[(method,path) for method,path,body in self.client.calls if body and "eventLabelId" in body]
+        self.assertTrue(writes)
+        self.assertTrue(all(path.endswith("?eventLabelVersion=1") for method,path in writes))
+        self.assertEqual(self.sync.sync(horizon=14),0)
+        self.sync.sync(horizon=30)
+        self.assertTrue(all(e.get("eventLabelId") in {v["label_id"] for v in selected.values()} for e in self.client.events.values()))
+        self.assertEqual(self.config.fingerprint(),fingerprint)
+        self.assertEqual(self.plan.schedule(self.start,date(2026,12,6)),schedule)
+        self.assertEqual(self.store.db.execute("SELECT status FROM requests WHERE id=?",(pending["id"],)).fetchone()[0],"draft")
+        self.assertEqual(self.store.db.execute("SELECT count(*) FROM plan_versions").fetchone()[0],versions)
+        self.assertEqual(self.store.db.execute("SELECT count(*) FROM audit WHERE action='parent_colors_updated'").fetchone()[0],1)
+
+    def test_parent_color_preferences_persist_and_are_bound_to_calendar(self):
+        from pplan.colors import set_parent_palette, plan_parent_palette
+        from pplan.core import PlanError
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"plan.sqlite3"
+            store=Store(path);plan=Plan(self.config,store,lambda:self.now)
+            store.set("google_calendar_id","fixture-calendar")
+            set_parent_palette(plan,42,self.selected_parent_colors());store.close()
+            store=Store(path,read_only=True)
+            try:self.assertEqual(plan_parent_palette(Plan(self.config,store,initialize=False)),self.selected_parent_colors())
+            finally:store.close()
+        with self.assertRaises(PlanError):set_parent_palette(self.plan,99,self.selected_parent_colors())
+        for selected in ({}, {"p1":{"color":"#039be5","label_id":"bad"},"p2":self.selected_parent_colors()["p2"]}):
+            with self.assertRaises(PlanError):set_parent_palette(self.plan,42,selected)
+        set_parent_palette(self.plan,42,self.selected_parent_colors())
+        self.store.set("google_calendar_id","another-calendar")
+        with self.assertRaises(PlanError):plan_parent_palette(self.plan)

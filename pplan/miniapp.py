@@ -15,7 +15,7 @@ import sqlite3
 import time
 from urllib.parse import parse_qsl, urlsplit
 
-from pplan.colors import PALETTE, parent_palette
+from pplan.colors import PALETTE, plan_parent_palette, own_color_data, update_own_color
 from pplan.core import Config, Plan, PlanError, SpecialEventConflict, Store
 
 ASSETS = Path(__file__).with_name("web")
@@ -42,6 +42,31 @@ def event_write_authorizer(action, table, column, database, source):
     if action == sqlite3.SQLITE_INSERT and table in {"audit", "plan_versions"}:
         return sqlite3.SQLITE_OK
     return sqlite3.SQLITE_DENY
+
+
+def color_write_authorizer(action, table, column, database, source):
+    if action in {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT, sqlite3.SQLITE_FUNCTION}:
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_READ and table in {"settings", "family_members", "parent_color_preferences"}:
+        return sqlite3.SQLITE_OK
+    if table == "parent_color_preferences" and (action == sqlite3.SQLITE_INSERT or action == sqlite3.SQLITE_UPDATE and column in {"color", "label_id", "color_id", "revision"}):
+        return sqlite3.SQLITE_OK
+    if table == "settings" and source in {"parent_color_dirty_insert", "parent_color_dirty_update"} and (action == sqlite3.SQLITE_INSERT or action == sqlite3.SQLITE_UPDATE and column=="value"):
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_INSERT and table == "audit":
+        return sqlite3.SQLITE_OK
+    return sqlite3.SQLITE_DENY
+
+
+def update_color(config, database, body, actor):
+    if set(body) != {"choice", "revision"}:
+        raise PlanError("Invalid parent color fields.")
+    store = Store(database, initialize=False)
+    try:
+        store.db.set_authorizer(color_write_authorizer)
+        return update_own_color(Plan(config, store, initialize=False), actor, body["choice"], body["revision"])
+    finally:
+        store.close()
 
 
 def update_event(config, database, body, actor=None):
@@ -112,7 +137,7 @@ def calendar_data(plan, month):
                            "events": [event_data(e) for e in events if e["start"] <= day.isoformat() <= e["end"]]})
     return {"month": month, "today": plan.today().isoformat(), "timezone": plan.config.timezone,
             "parents": plan.config.parents, "children": plan.config.children,
-            "palette": PALETTE, "parent_colors": {p: c["color"] for p,c in parent_palette(plan.config.parents).items()},
+            "palette": PALETTE, "parent_colors": {p: c["color"] for p,c in plan_parent_palette(plan).items()},
             "handover_confirmed": plan.config.handover_confirmed,
             "days": result, "totals": plan.overnight_totals(first, last),
             "year_totals": plan.overnight_totals(date(first.year, 1, 1), last)}
@@ -163,7 +188,7 @@ def make_handler(config, database, token):
             self.reply(200, (ASSETS / name).read_bytes(), kind)
 
         def do_POST(self):
-            if self.path not in {"/api/calendar", "/api/specials/list", "/api/specials/update"}:
+            if self.path not in {"/api/calendar", "/api/specials/list", "/api/specials/update", "/api/colors", "/api/colors/update"}:
                 self.reply(404, {"error": "Not found."})
                 return
             try:
@@ -184,6 +209,9 @@ def make_handler(config, database, token):
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
                     raise ValueError()
+                if self.path == "/api/colors/update":
+                    self.reply(200, update_color(config, database, body, actor))
+                    return
                 if self.path == "/api/specials/update":
                     self.reply(200, {"event": update_event(config, database, body, actor)})
                     return
@@ -192,7 +220,7 @@ def make_handler(config, database, token):
                     store.db.execute("BEGIN")
                     plan = Plan(config, store)
                     plan.authorize(actor)
-                    data = ({"events": [event_data(event) for event in plan.special_events()]}
+                    data = (own_color_data(plan, actor) if self.path == "/api/colors" else {"events": [event_data(event) for event in plan.special_events()]}
                             if self.path == "/api/specials/list" else
                             calendar_data(plan, body.get("month", plan.today().strftime("%Y-%m"))))
                 finally:

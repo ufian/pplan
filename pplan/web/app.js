@@ -46,7 +46,7 @@ function renderMonth(value){
     if(day.events.length){const marker=element("span",undefined,"special-marker");marker.style.background="linear-gradient(90deg,"+day.events.map((e,i)=>`${e.color} ${i/day.events.length*100}% ${(i+1)/day.events.length*100}%`).join(",")+")";b.append(marker);}
     const shared=children.every(c=>day.before[c]===day.before[children[0]]&&day.after[c]===day.after[children[0]]);
     for(const c of shared?[children[0]]:children){const band=element("span",undefined,"band");band.style.background=`linear-gradient(90deg,${parentColor(day.before[c])} 50%,${parentColor(day.after[c])} 50%)`;b.append(band);}
-    b.onclick=()=>{data=value;selected=day.date;document.querySelectorAll(".day[aria-pressed=true]").forEach(el=>el.setAttribute("aria-pressed","false"));b.setAttribute("aria-pressed","true");renderDetail();renderTotals();$("day-dialog").showModal();tg?.HapticFeedback?.selectionChanged();};grid.append(b);
+    b.onclick=()=>{value.parent_colors=data.parent_colors;data=value;selected=day.date;document.querySelectorAll(".day[aria-pressed=true]").forEach(el=>el.setAttribute("aria-pressed","false"));b.setAttribute("aria-pressed","true");renderDetail();renderTotals();$("day-dialog").showModal();tg?.HapticFeedback?.selectionChanged();};grid.append(b);
   }
   card.append(grid);return card;
 }
@@ -162,3 +162,50 @@ $("menu-button").onclick=()=>$("menu").showModal();$("close-menu").onclick=()=>$
 $("refresh").onclick=()=>{$("menu").close();load(visibleMonth);};$("today").onclick=()=>{$("menu").close();load();};
 $("retry").onclick=appendNext;$("totals-period").onchange=renderTotals;
 load();
+
+
+let colorSettings,savingColor=false,colorLoad=0,colorPoll;
+function previewParentColor(){
+  const option=colorSettings?.options.find(c=>c.key===$("parent-color").value);
+  if(!option)return;
+  $("parent-preview").style.borderColor=option.color;$("parent-preview").textContent=colorSettings.name+" · "+option.color.toUpperCase();
+  for(const b of $("parent-palette").children)b.setAttribute("aria-pressed",String(b.dataset.key===option.key));
+}
+function applyParentColors(colors){
+  if(data)data.parent_colors=colors;
+  for(const [key,value] of months){value.parent_colors=colors;document.querySelector(`[data-month="${key}"]`)?.replaceWith(renderMonth(value));}
+  if(selected){renderDetail();renderTotals();}
+}
+function colorSyncStatus(value){
+  $("color-status").textContent=value.sync_error?"Color saved. Google Calendar will retry when the connection is available.":value.sync_pending?"Color saved. Updating Google Calendar…":"Google Calendar is up to date.";
+}
+function scheduleColorStatus(){
+  clearTimeout(colorPoll);
+  if(!$("color-dialog").open||!colorSettings?.sync_pending)return;
+  const request=colorLoad;
+  colorPoll=setTimeout(async()=>{try{if(!$("color-dialog").open)return;const value=await api("/api/colors");if(request!==colorLoad||!$("color-dialog").open)return;colorSyncStatus(value);colorSettings.sync_pending=value.sync_pending;applyParentColors(value.parent_colors);scheduleColorStatus();}catch{}},3000);
+}
+async function showMyColor(){
+  $("menu").close();$("color-dialog").showModal();$("color-error").textContent="Loading your colors…";$("color-status").textContent="";$("color-fields").disabled=true;$("save-color").disabled=true;
+  const request=++colorLoad;
+  try{
+    const value=await api("/api/colors");if(!$("color-dialog").open||request!==colorLoad)return;colorSettings=value;
+    $("color-parent").textContent=value.name;
+    $("parent-color").replaceChildren(...value.options.map(c=>{const option=element("option",c.name||c.color.toUpperCase());option.value=c.key;return option;}));
+    $("parent-color").value=value.choice;
+    $("parent-palette").replaceChildren(...value.options.map(c=>{const b=element("button");b.type="button";b.dataset.key=c.key;b.style.background=c.color;b.setAttribute("aria-label",c.name||c.color.toUpperCase());b.title=c.name||c.color.toUpperCase();b.onclick=()=>{$("parent-color").value=c.key;previewParentColor();};return b;}));
+    previewParentColor();$("color-fields").disabled=false;$("save-color").disabled=false;$("color-error").textContent="";colorSyncStatus(value);applyParentColors(value.parent_colors);scheduleColorStatus();
+  }catch(exc){if($("color-dialog").open)$("color-error").textContent=exc instanceof TypeError?"Cannot load colors. Close and try again.":exc.message;}
+}
+async function saveMyColor(e){
+  e.preventDefault();if(savingColor||!colorSettings)return;
+  savingColor=true;++colorLoad;clearTimeout(colorPoll);$("color-fields").disabled=true;$("save-color").disabled=true;$("close-color").disabled=true;$("cancel-color").disabled=true;$("color-error").textContent="";$("color-status").textContent="Saving…";
+  try{
+    colorSettings=await api("/api/colors/update",{choice:$("parent-color").value,revision:colorSettings.revision});
+    applyParentColors(colorSettings.parent_colors);colorSyncStatus(colorSettings);scheduleColorStatus();tg?.HapticFeedback?.notificationOccurred("success");
+  }catch(exc){$("color-error").textContent=exc instanceof TypeError?"Connection lost. Try saving again; duplicate saves are safe.":exc.message;$("color-status").textContent="";}
+  finally{savingColor=false;$("color-fields").disabled=false;$("save-color").disabled=false;$("close-color").disabled=false;$("cancel-color").disabled=false;}
+}
+function closeMyColor(){if(!savingColor){++colorLoad;clearTimeout(colorPoll);$("color-dialog").close();}}
+$("my-color-button").onclick=showMyColor;$("close-color").onclick=$("cancel-color").onclick=closeMyColor;$("parent-color").onchange=previewParentColor;$("color-form").onsubmit=saveMyColor;
+$("color-dialog").addEventListener("cancel",e=>{if(savingColor)e.preventDefault();else{++colorLoad;clearTimeout(colorPoll);}});

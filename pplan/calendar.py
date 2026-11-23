@@ -14,7 +14,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from pplan.core import PlanError, days
-from pplan.colors import google_color, parent_palette
+from pplan.colors import google_color, plan_parent_palette, parent_palette_version
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.app.created"]
 EVENT_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
@@ -106,10 +106,11 @@ class GoogleServiceAccountClient:
         parsed = urlsplit(path) if isinstance(path, str) else None
         suffix = parsed.path[len(self.event_path):] if parsed and parsed.path.startswith(self.event_path) else None
         event_route = suffix is not None and re.fullmatch(r"/[0-9a-f]{32}", suffix)
+        label_query = parsed is not None and parsed.query == "eventLabelVersion=1"
         allowed = (parsed is not None and not parsed.scheme and not parsed.netloc and not parsed.fragment
                    and suffix is not None and ((method == "GET" and (suffix == "" or event_route))
-                   or (method == "POST" and suffix == "" and not parsed.query)
-                   or (method in {"PUT", "DELETE"} and event_route and not parsed.query)))
+                   or (method == "POST" and suffix == "" and (not parsed.query or label_query))
+                   or (method in {"PUT", "DELETE"} and event_route and (not parsed.query or method == "PUT" and label_query))))
         if not allowed:
             raise PlanError("Service-account requests must target events in the configured calendar.")
         response = request_with_backoff(self.session, method, path, body)
@@ -268,12 +269,21 @@ class CalendarSync:
         config = self.plan.config
         return {"id": event_id,
                 "summary": " and ".join(config.children[c] for c in period["children"]) + " with " + config.parents[period["parent"]],
-                "colorId": parent_palette(config.parents)[period["parent"]]["id"],
+                **self.parent_color_fields(period["parent"]),
                 "description": "Confirmed continuous parenting period. Edit through the bot; calendar edits are not imported.",
                 "start": {"dateTime": config.boundary(period["start"]).isoformat(), "timeZone": config.timezone},
                 "end": {"dateTime": config.boundary(period["end"]).isoformat(), "timeZone": config.timezone},
                 "extendedProperties": {"private": {"pplan": self.store.get("plan_id"), "format": "periods-v1",
                                                    "children": ",".join(period["children"]), "period_key": period["key"]}}}
+
+    def parent_color_fields(self, parent):
+        color = plan_parent_palette(self.plan)[parent]
+        return {"eventLabelId": color["label_id"]} if "label_id" in color else {"colorId": color["id"]}
+
+    def _write_period(self, method, path, event):
+        if "eventLabelId" in event:
+            path += "?eventLabelVersion=1"
+        return self.client.request(method, path, event)
 
     def _upsert_period(self, path, period, remote, force):
         # Reserve IDs before HTTP so a retry after a lost response cannot create duplicates.
@@ -288,11 +298,11 @@ class CalendarSync:
             if not force and cached["signature"] == signature and event["id"] in remote:
                 return event["id"], 0
             event_path = path + "/" + event["id"]
-            status, _ = self.client.request("PUT" if event["id"] in remote else "POST", event_path if event["id"] in remote else path, event)
+            status, _ = self._write_period("PUT" if event["id"] in remote else "POST", event_path if event["id"] in remote else path, event)
             if status == 409:
                 found, existing = self.client.request("GET", event_path + "?fields=id,extendedProperties")
                 if found == 200 and isinstance(existing, dict) and self._children(existing):
-                    status, _ = self.client.request("PUT", event_path, event)
+                    status, _ = self._write_period("PUT", event_path, event)
                 elif found in (404,410) or found == 200:
                     status = 410
                 else:
@@ -356,6 +366,7 @@ class CalendarSync:
         remote_specials = self.owned_events(path, specials=True)
         with self.store.transaction():
             version = self.store.db.execute("SELECT max(id) FROM plan_versions").fetchone()[0]
+            palette_version = parent_palette_version(self.plan)
             desired = self.periods(horizon, remote)
             specials = self.plan.special_events()
         active, count = set(), 0
@@ -386,8 +397,10 @@ class CalendarSync:
             if row["event_id"] not in special_active:
                 self.store.db.execute("DELETE FROM calendar_special_cache WHERE event_id=?", (row["event_id"],))
         self.store.db.execute("DELETE FROM calendar_cache")
-        newer = self.store.db.execute("SELECT max(id) FROM plan_versions").fetchone()[0]
-        self.store.set("calendar_dirty", "1" if newer != version else "0")
-        self.store.set("calendar_error", "none")
-        self.store.set("calendar_last_success", self.plan.clock().isoformat())
+        with self.store.transaction():
+            newer = self.store.db.execute("SELECT max(id) FROM plan_versions").fetchone()[0]
+            changed = newer != version or parent_palette_version(self.plan) != palette_version
+            self.store.set("calendar_dirty", "1" if changed else "0")
+            self.store.set("calendar_error", "none")
+            self.store.set("calendar_last_success", self.plan.clock().isoformat())
         return count

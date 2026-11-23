@@ -128,3 +128,16 @@ class ServiceAccountTests(Fixture):
             self.assertEqual(client.request('GET',client.event_path),(429,None))
             self.assertEqual(session.return_value.request.call_count,5)
             self.assertEqual([call.args[0] for call in sleep.call_args_list],[1,2,4,8])
+
+
+    def test_existing_color_labels_allow_only_exact_version_query_on_event_writes(self):
+        with patch('google.oauth2.service_account.Credentials.from_service_account_file'),patch('google.auth.transport.requests.AuthorizedSession') as session:
+            client=GoogleServiceAccountClient('/fixture/key.json',TARGET)
+            session.return_value.request.return_value=SimpleNamespace(status_code=200,json=lambda:{})
+            for method,path in (("POST",client.event_path),("PUT",client.event_path+"/"+"a"*32)):
+                self.assertEqual(client.request(method,path+"?eventLabelVersion=1",{}),(200,{}))
+            for method,path in (("DELETE",client.event_path+"/"+"a"*32),("PUT",client.event_path+"/"+"a"*32),("POST",client.event_path)):
+                queries=["eventLabelVersion=1&sendUpdates=all","eventLabelVersion=2","eventLabelVersion=1&eventLabelVersion=1"]
+                if method=="DELETE":queries.append("eventLabelVersion=1")
+                for query in queries:
+                    with self.subTest(method=method,query=query),self.assertRaises(PlanError):client.request(method,path+"?"+query,{})

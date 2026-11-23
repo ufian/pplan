@@ -193,6 +193,10 @@ class Store:
                 period_key TEXT PRIMARY KEY, event_id TEXT UNIQUE NOT NULL, signature TEXT NOT NULL,
                 start TEXT NOT NULL, end TEXT NOT NULL, children TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS parent_color_preferences (
+                parent TEXT PRIMARY KEY, calendar_id TEXT NOT NULL, color TEXT NOT NULL,
+                label_id TEXT, color_id TEXT, revision INTEGER NOT NULL DEFAULT 1
+            );
             CREATE TABLE IF NOT EXISTS calendar_special_cache (
                 special_id INTEGER PRIMARY KEY, event_id TEXT UNIQUE NOT NULL, signature TEXT NOT NULL
             );
@@ -210,6 +214,12 @@ class Store:
                 if name not in event_columns:
                     self.db.execute(f"ALTER TABLE special_events ADD COLUMN {name} {declaration}")
         self.db.executescript("""
+            CREATE TRIGGER IF NOT EXISTS parent_color_dirty_insert AFTER INSERT ON parent_color_preferences BEGIN
+                INSERT INTO settings(key,value) VALUES('calendar_dirty','1') ON CONFLICT(key) DO UPDATE SET value='1';
+            END;
+            CREATE TRIGGER IF NOT EXISTS parent_color_dirty_update AFTER UPDATE ON parent_color_preferences BEGIN
+                INSERT INTO settings(key,value) VALUES('calendar_dirty','1') ON CONFLICT(key) DO UPDATE SET value='1';
+            END;
             CREATE TRIGGER IF NOT EXISTS special_event_dirty_insert AFTER INSERT ON special_events BEGIN
                 INSERT INTO settings(key,value) VALUES('calendar_dirty','1')
                 ON CONFLICT(key) DO UPDATE SET value='1';
