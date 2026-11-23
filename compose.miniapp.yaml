@@ -1,0 +1,32 @@
+# Opt in with COMPOSE_FILE=compose.yaml:compose.dev.yaml:compose.miniapp.yaml.
+services:
+  bot:
+    environment:
+      PPLAN_MINIAPP_URL: ${PPLAN_MINIAPP_URL:-}
+  miniapp:
+    image: pplan:local
+    user: "1000:1000"
+    init: true
+    restart: unless-stopped
+    command: [python, -m, pplan.miniapp]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:mode=1777,size=32m"]
+    ports: ["127.0.0.1:8081:8081"]
+    environment:
+      TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
+    secrets: [telegram_bot_token]
+    volumes:
+      - ./config.json:/config/config.json:ro
+      - ./data/bot:/data:ro
+      - ./pplan:/app/pplan:ro
+      - ./tests:/app/tests:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}

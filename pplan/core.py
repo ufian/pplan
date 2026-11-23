@@ -107,7 +107,14 @@ def days(start: date, end: date):
 
 
 class Store:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, read_only=False):
+        self.read_only = read_only
+        if read_only:
+            self.db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, isolation_level=None)
+            self.db.row_factory = sqlite3.Row
+            self.db.execute("PRAGMA query_only=ON")
+            self.db.execute("PRAGMA busy_timeout=5000")
+            return
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.db = sqlite3.connect(str(path), isolation_level=None)
@@ -191,6 +198,10 @@ class Plan:
         config.validate()
         self.config, self.store = config, store
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        if store.read_only:
+            if store.get("config_fingerprint") != config.fingerprint():
+                raise PlanError("Calendar configuration does not match the database.")
+            return
         with store.transaction():
             fingerprint = store.get("config_fingerprint")
             has_requests = store.db.execute("SELECT 1 FROM requests LIMIT 1").fetchone()

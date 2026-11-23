@@ -6,6 +6,7 @@ from pplan.core import PlanError
 
 
 HELP = """Commands:
+/calendar — open the interactive calendar Mini App
 /schedule — current week through next month's calendar
 /schedule YYYY-MM-DD YYYY-MM-DD — calendar and night totals for up to 700 days
 /requests — recent changes and confirmation buttons

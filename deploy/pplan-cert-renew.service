@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew Parenting Plan HTTPS certificate
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker run --rm --network host -v /etc/letsencrypt:/etc/letsencrypt -v /var/www/pplan-acme:/var/www/acme certbot/certbot@sha256:c5698da859429ccee0fcc299a8000368198222d1f9e789ab6e388b491e8ce06d renew --quiet
+ExecStartPost=/usr/bin/docker exec pplan-proxy nginx -s reload

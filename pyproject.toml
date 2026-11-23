@@ -17,3 +17,6 @@ pplan = "pplan.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["pplan*"]
+
+[tool.setuptools.package-data]
+pplan = ["web/*.html", "web/*.css", "web/*.js"]

@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 import base64
 import json
 import logging
+import os
 from pathlib import Path
 import time
 from urllib.error import HTTPError, URLError
@@ -201,6 +202,11 @@ class Bot:
             config = self.plan.config
             members = f"Parents: {', '.join(config.parents.values())}\nChildren: {', '.join(config.children.values())}"
             self.say(actor, "Parenting Plan · solo mode\n" + members + "\n\n" + HELP)
+        elif command == "/calendar":
+            url = os.environ.get("PPLAN_MINIAPP_URL", "")
+            if not url.startswith("https://"):
+                raise PlanError("The calendar Mini App is not configured yet. Use /schedule.")
+            self.say(actor, "Open your live family calendar.", [{"text": "Open calendar", "web_app": {"url": url}}])
         elif command == "/schedule":
             from pplan.calendar_image import default_calendar_range
             start, end = default_calendar_range(self.plan.today())

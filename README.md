@@ -14,6 +14,7 @@ Each child has an independent assignment. A handover date labels the period from
 - Clarification history, cancellation, preview expiry, stale-preview rejection, duplicate-update protection, and an audit trail.
 - One-way Google Calendar sync with a separate timed event for each child and handover period.
 - Docker Compose deployment on a NAS, persistent SQLite storage, health checks, and durable Telegram replies.
+- A private, read-only Telegram Mini App with month navigation, child filters, handover details, special events, and night totals.
 
 The MVP supports one family, two parents, two children, and one shared school handover timetable. Both children start with the same repeating baseline; exceptions and new repeating rules can put them with different parents. A message can propose up to 12 actions: assigning date ranges and starting repeating cycles from future dates. Two-way swaps and several vacation periods share one preview and confirmation. Each assignment covers up to 31 handover dates; longer periods can be split into adjacent actions. Hourly exceptions, separate school timetables, automatic holiday precedence, multi-family hosting, and second-parent approval are future work.
 
@@ -52,7 +53,9 @@ docker compose up -d
 docker compose ps
 ```
 
-Commands: `/start`, `/help`, `/whoami`, `/schedule`, `/requests`, `/status`. An explicit fallback bypasses AI and remains usable when the subscription is unavailable:
+The interactive calendar opens with the **Calendar** menu button or `/calendar`. See [Mini App deployment](docs/miniapp.md) for its NAS-to-public-proxy architecture.
+
+Commands: `/start`, `/help`, `/whoami`, `/calendar`, `/schedule`, `/requests`, `/status`. An explicit fallback bypasses AI and remains usable when the subscription is unavailable:
 
 `/schedule` returns a locally rendered calendar image covering the current and next month, starting at the current week. Every visible date has an assignment, including dates in weeks crossing a month boundary; dates before the plan starts remain unassigned. Long ranges use multiple month columns, keeping image height at most 1.5 times its width. A transfer date is split into equal color halves: left before handover, right after, without parent labels inside either half. Stable shared days show one parent's name; children are listed separately only when their assignments differ during that day. Earlier week rows are omitted, and shared weeks are never duplicated between months. Explicit date ranges select calendar months, with the first month cropped to the requested starting week.
 
