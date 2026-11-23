@@ -1,6 +1,6 @@
 # Telegram calendar Mini App
 
-The Mini App is a view of the existing confirmed parenting plan. It supports month navigation, a month picker, a Today shortcut, child filters, day details, split handover colors, special-event markers, and night totals for the month or January 1 through month end. Dates and times use the configured family timezone. Draft changes are never displayed as confirmed assignments. Open it with the bot's **Calendar** menu button or `/calendar`.
+The Mini App is a view of the existing confirmed parenting plan. It supports forward scrolling with automatic loading of later months, month navigation buttons, a month picker, a Today shortcut, child filters in a hamburger menu, day details in a bottom dialog, square day cells, split handover colors, special-event markers, and night totals for the month or January 1 through month end. Dates and times use the configured family timezone. Draft changes are never displayed as confirmed assignments. Earlier months are loaded only through month navigation or the month picker; scrolling does not prepend past months. Open it with the bot's **Calendar** menu button or `/calendar`.
 
 ## Data ownership and connection
 
