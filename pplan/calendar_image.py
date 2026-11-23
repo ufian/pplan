@@ -12,7 +12,7 @@ WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 COLORS = (("#17695e", "#e3f3ed"), ("#ad4c32", "#fcebe2"))
 SPECIAL_COLOR = "#7845a6"
 MAX_CALENDAR_DAYS = 700
-NIGHTS_BLOCK_HEIGHT = 254
+NIGHTS_BLOCK_HEIGHT = 212
 NIGHTS_BLOCK_GAP = 16
 NIGHTS_SECTION_HEIGHT = NIGHTS_BLOCK_HEIGHT + 74
 
@@ -41,21 +41,6 @@ def calendar_pages(start, end):
     return pages
 
 
-def date_range_label(start, end):
-    end_label = f"{end.year % 100:02d}-{end.month}-{end.day}"
-    if start == end:
-        return end_label
-    start_label = f"{start.year % 100:02d}-{start.month}-{start.day}"
-    return f"{start_label} → {end_label}"
-
-
-def night_count_periods(start, end):
-    return (
-        ("Requested period", start, end),
-        ("Since January 1", date(end.year, 1, 1), end),
-    )
-
-
 def assignments_for_day(plan, day):
     groups = {}
     for child in plan.config.children:
@@ -76,9 +61,10 @@ def day_segments(plan, day):
             for (before, after), children in groups.items()]
 
 
-def image_layout(months, header=178):
+def image_layout(months, header=178, *, has_events=False):
     """Use the fewest month columns that keep height at most 1.5 × width."""
-    margin, grid_width, gap, footer = 42, 7 * 148, 42, 76 + NIGHTS_SECTION_HEIGHT
+    margin, grid_width, gap = 42, 7 * 148, 42
+    footer = NIGHTS_SECTION_HEIGHT + (36 if has_events else 0)
     for columns in range(1, len(months) + 1):
         width = margin * 2 + columns * grid_width + (columns - 1) * gap
         months_per_column, extra = divmod(len(months), columns)
@@ -122,7 +108,7 @@ def render_calendar(plan, start: date, end: date):
 
     margin, cell, row = 42, 148, 98
     header = 216 if not plan.config.handover_confirmed else 178
-    layout = image_layout(months, header)
+    layout = image_layout(months, header, has_events=bool(events))
     width, height = layout["width"], layout["height"]
     image = Image.new("RGB", (width, height), "#f3f6f8")
     draw = ImageDraw.Draw(image)
@@ -140,7 +126,7 @@ def render_calendar(plan, start: date, end: date):
     label(margin, 22, "Parenting Plan", 42, bold=True)
     times = {*plan.config.school_handover_times.values(), plan.config.non_school_handover_time}
     time_note = f"   ·   Handover {next(iter(times))}" if len(times) == 1 and plan.config.handover_confirmed else ""
-    label(margin, 77, f"{visible_start.isoformat()}  →  {visible_end.isoformat()}   ·   {plan.config.timezone}{time_note}", 22, color="#3f5360", max_width=width - margin * 2)
+    label(margin, 77, f"{visible_start.isoformat()}  →  {visible_end.isoformat()}{time_note}", 22, color="#3f5360", max_width=width - margin * 2)
     parent_colors = {parent: COLORS[index] for index, parent in enumerate(plan.config.parents)}
     legend_width = (width - margin * 2 - 18) // 2
     for index, (parent, name) in enumerate(plan.config.parents.items()):
@@ -214,32 +200,32 @@ def render_calendar(plan, start: date, end: date):
                     bounds = (panel_x + columns[0] * cell, box_y - 2,
                               panel_x + (columns[-1] + 1) * cell - 3, box_y + row - 5)
                     draw.rounded_rectangle(bounds, radius=12, outline=SPECIAL_COLOR, width=3)
-    notes_bottom = height - NIGHTS_SECTION_HEIGHT
-    label(margin, notes_bottom - 64, "Split colors: left before handover, right after handover.", 21, "#3f5360")
+    summary_top = height - NIGHTS_SECTION_HEIGHT
     if events:
-        label(margin, notes_bottom - 36, "Purple frames mark special events.", 21, SPECIAL_COLOR)
+        label(margin, summary_top - 36, "Purple frames mark special events.", 21, SPECIAL_COLOR)
 
     summary_width = width - 2 * margin
-    label(margin, notes_bottom, "Scheduled nights by child", 36, bold=True)
+    label(margin, summary_top, "Scheduled nights by child", 36, bold=True)
     block_width = (summary_width - NIGHTS_BLOCK_GAP) // 2
     column_width = (block_width - 36) // 3
-    block_top = notes_bottom + 50
-    for index, (period_name, period_start, period_end) in enumerate(night_count_periods(start, end)):
+    block_top = summary_top + 50
+    periods = ((start, end), (date(end.year, 1, 1), end))
+    for index, (period_start, period_end) in enumerate(periods):
         totals = plan.overnight_totals(period_start, period_end)
         block_x = margin + index * (block_width + NIGHTS_BLOCK_GAP)
         content_x = block_x + 18
         draw.rounded_rectangle((block_x, block_top, block_x + block_width, block_top + NIGHTS_BLOCK_HEIGHT),
                                radius=16, fill="#ffffff", outline="#dfe7ec", width=2)
-        label(content_x, block_top + 12, period_name, 32, bold=True)
-        label(content_x, block_top + 51, date_range_label(period_start, period_end), 25, "#3f5360")
+        label(content_x, block_top + 12, f"{period_start.isoformat()} → {period_end.isoformat()}",
+              32, bold=True, max_width=block_width - 36)
         for parent_index, (parent, parent_name) in enumerate(plan.config.parents.items(), 1):
             parent_x = content_x + parent_index * column_width
             color, fill = parent_colors[parent]
-            draw.rounded_rectangle((parent_x, block_top + 93, parent_x + column_width - 8, block_top + 236),
+            draw.rounded_rectangle((parent_x, block_top + 51, parent_x + column_width - 8, block_top + 194),
                                    radius=10, fill=fill)
-            label(parent_x + 10, block_top + 103, parent_name, 23, color, bold=True, max_width=column_width - 28)
+            label(parent_x + 10, block_top + 61, parent_name, 23, color, bold=True, max_width=column_width - 28)
         for child_index, (child, child_name) in enumerate(plan.config.children.items()):
-            row_y = block_top + 137 + child_index * 48
+            row_y = block_top + 95 + child_index * 48
             label(content_x, row_y + 5, child_name, 24, bold=True, max_width=column_width - 12)
             for parent_index, parent in enumerate(plan.config.parents, 1):
                 x = content_x + parent_index * column_width + 10
