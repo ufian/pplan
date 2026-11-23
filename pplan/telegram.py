@@ -83,17 +83,15 @@ class Bot:
                    "Split colors show the parent before handover on the left and after handover on the right. Children are listed only when their assignments differ.")
         if not config.handover_confirmed:
             caption += "\nSetup pending: displayed times are examples, not confirmed handover times."
-        periods = night_count_periods(start, end)
-        totals = [self.plan.overnight_totals(period_start, period_end) for _, period_start, period_end in periods]
-        summary = ["Scheduled nights by child"]
-        summary += [f"{name} · {date_range_label(period_start, period_end)}"
-                    for name, period_start, period_end in periods]
-        for child, child_name in config.children.items():
-            summary.append(f"\n{child_name}")
-            for parent, parent_name in config.parents.items():
-                year_count, range_count = (period_totals[child][parent] for period_totals in totals)
-                summary.append(f"{parent_name}: {year_count} since January 1 · {range_count} in requested period")
-        summary_text = "\n".join(summary)
+        summary = []
+        for name, period_start, period_end in night_count_periods(start, end):
+            totals = self.plan.overnight_totals(period_start, period_end)
+            block = [f"Scheduled nights · {name}", date_range_label(period_start, period_end)]
+            for child, child_name in config.children.items():
+                counts = ", ".join(f"{config.parents[parent]} {count}" for parent, count in totals[child].items())
+                block.append(f"{child_name}: {counts}")
+            summary.append("\n".join(block))
+        summary_text = "\n\n".join(summary)
         full_caption = f"{caption}\n\n{summary_text}"
         summary_fits = len(full_caption.encode("utf-16-le")) <= 2048
         self.store.enqueue({"method": "sendPhoto", "payload": {

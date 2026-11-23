@@ -12,7 +12,9 @@ WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 COLORS = (("#17695e", "#e3f3ed"), ("#ad4c32", "#fcebe2"))
 SPECIAL_COLOR = "#7845a6"
 MAX_CALENDAR_DAYS = 700
-NIGHTS_SECTION_HEIGHT = 428
+NIGHTS_BLOCK_HEIGHT = 220
+NIGHTS_BLOCK_GAP = 16
+NIGHTS_SECTION_HEIGHT = 2 * NIGHTS_BLOCK_HEIGHT + NIGHTS_BLOCK_GAP + 24
 
 
 def default_calendar_range(today):
@@ -56,8 +58,8 @@ def date_range_label(start, end):
 
 def night_count_periods(start, end):
     return (
-        ("Since January 1", date(end.year, 1, 1), end),
         ("Requested period", start, end),
+        ("Since January 1", date(end.year, 1, 1), end),
     )
 
 
@@ -224,35 +226,30 @@ def render_calendar(plan, start: date, end: date):
     if events:
         label(margin, notes_bottom - 36, "Purple frames mark special events.", 21, SPECIAL_COLOR)
 
-    periods = night_count_periods(start, end)
-    totals = [plan.overnight_totals(period_start, period_end) for _, period_start, period_end in periods]
     summary_width = width - 2 * margin
-    label(margin, notes_bottom + 2, "Scheduled nights by child", 40, bold=True)
-    for index, (period_name, period_start, period_end) in enumerate(periods):
-        label(margin, notes_bottom + 54 + index * 31,
-              f"{period_name} · {date_range_label(period_start, period_end)}",
-              24, "#3f5360", max_width=summary_width)
-    card_width = (summary_width - 20) // 2
-    card_top = notes_bottom + 126
-    parent_width = (card_width - 56) // 2
-    for child_index, (child, child_name) in enumerate(plan.config.children.items()):
-        x = margin + child_index * (card_width + 20)
-        draw.rounded_rectangle((x, card_top, x + card_width, height - 28),
+    child_width = (summary_width - 56) // 2
+    parent_width = (child_width - 12) // 2
+    for index, (period_name, period_start, period_end) in enumerate(night_count_periods(start, end)):
+        totals = plan.overnight_totals(period_start, period_end)
+        block_top = notes_bottom + index * (NIGHTS_BLOCK_HEIGHT + NIGHTS_BLOCK_GAP)
+        draw.rounded_rectangle((margin, block_top, width - margin, block_top + NIGHTS_BLOCK_HEIGHT),
                                radius=16, fill="#ffffff", outline="#dfe7ec", width=2)
-        label(x + 18, card_top + 12, child_name, 32, bold=True, max_width=card_width - 36)
-        for parent_index, (parent, parent_name) in enumerate(plan.config.parents.items()):
-            parent_x = x + 18 + parent_index * (parent_width + 20)
-            color, fill = parent_colors[parent]
-            draw.rounded_rectangle((parent_x, card_top + 62, parent_x + parent_width, height - 46),
-                                   radius=10, fill=fill)
-            label(parent_x + 14, card_top + 70, parent_name, 26, color, bold=True, max_width=parent_width - 28)
-            for index, (period_name, _, _) in enumerate(periods):
-                count = totals[index][child][parent]
+        label(margin + 18, block_top + 12, f"Scheduled nights · {period_name}", 34, bold=True)
+        label(margin + 18, block_top + 53, date_range_label(period_start, period_end),
+              25, "#3f5360", max_width=summary_width - 36)
+        for child_index, (child, child_name) in enumerate(plan.config.children.items()):
+            child_x = margin + 18 + child_index * (child_width + 20)
+            label(child_x, block_top + 91, child_name, 27, bold=True, max_width=child_width)
+            for parent_index, (parent, parent_name) in enumerate(plan.config.parents.items()):
+                parent_x = child_x + parent_index * (parent_width + 12)
+                color, fill = parent_colors[parent]
+                draw.rounded_rectangle((parent_x, block_top + 131, parent_x + parent_width, block_top + 202),
+                                       radius=10, fill=fill)
+                label(parent_x + 12, block_top + 135, parent_name, 22, color, bold=True, max_width=parent_width - 24)
+                count = totals[child][parent]
                 unit = "night" if count == 1 else "nights"
-                row_top = card_top + 107 + index * 70
-                label(parent_x + 14, row_top, period_name, 21, color, max_width=parent_width - 28)
-                label(parent_x + 14, row_top + 24, f"{count} {unit}", 38, color, bold=True,
-                      max_width=parent_width - 28)
+                label(parent_x + 12, block_top + 161, f"{count} {unit}", 32, color, bold=True,
+                      max_width=parent_width - 24)
     output = BytesIO()
     image.save(output, format="PNG", optimize=True)
     return output.getvalue()

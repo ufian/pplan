@@ -269,10 +269,10 @@ class ImageTests(Fixture):
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["method"], "sendPhoto")
         caption = jobs[0]["payload"]["caption"]
-        self.assertIn("Since January 1 · January 1 through November 25, 2026", caption)
-        self.assertIn("Requested period · November 24 through November 25, 2026", caption)
-        self.assertIn("Older\nFirst: 3 since January 1 · 2 in requested period", caption)
-        self.assertIn("Younger\nFirst: 3 since January 1 · 2 in requested period", caption)
+        self.assertIn("Scheduled nights · Requested period\nNovember 24 through November 25, 2026\n"
+                      "Older: First 2, Second 0\nYounger: First 2, Second 0", caption)
+        self.assertIn("Scheduled nights · Since January 1\nJanuary 1 through November 25, 2026\n"
+                      "Older: First 3, Second 0\nYounger: First 3, Second 0", caption)
         self.assertTrue(base64.b64decode(jobs[0]["payload"]["photo_base64"]).startswith(b"\x89PNG"))
 
     def test_photo_upload_contains_binary_png_and_caption(self):
