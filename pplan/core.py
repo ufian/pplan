@@ -164,6 +164,19 @@ class Store:
                 status TEXT NOT NULL DEFAULT 'queued', created TEXT NOT NULL,
                 updated TEXT NOT NULL, result TEXT
             );
+            CREATE TABLE IF NOT EXISTS family_members (
+                telegram_id INTEGER PRIMARY KEY, parent_id TEXT NOT NULL,
+                joined TEXT NOT NULL, revoked TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS one_second_parent
+                ON family_members((1)) WHERE revoked IS NULL;
+            CREATE TABLE IF NOT EXISTS parent_invites (
+                id TEXT PRIMARY KEY, code_hash TEXT UNIQUE NOT NULL, parent_id TEXT NOT NULL,
+                created TEXT NOT NULL, expires TEXT NOT NULL, used_by INTEGER, used TEXT, revoked TEXT
+            );
+            CREATE TABLE IF NOT EXISTS invite_attempts (
+                actor INTEGER PRIMARY KEY, window_start TEXT NOT NULL, failures INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS calendar_cache (
                 key TEXT PRIMARY KEY, signature TEXT NOT NULL
             );
@@ -233,8 +246,16 @@ class Plan:
         return self.clock().astimezone(ZoneInfo(self.config.timezone)).date()
 
     def authorize(self, actor):
-        if actor != self.config.operator_telegram_id:
-            raise PlanError("You are not authorized to manage this plan.")
+        from pplan.access import authorize
+        authorize(self, actor)
+
+    def authorize_owner(self, actor):
+        from pplan.access import authorize_owner
+        authorize_owner(self, actor)
+
+    def has_access(self, actor):
+        from pplan.access import has_access
+        return has_access(self, actor)
 
     def assignment(self, child: str, day: date):
         if child not in self.config.children:
@@ -279,8 +300,8 @@ class Plan:
         return json.loads(phase["cycle"]) if phase else list(self.config.cycle)
 
     def special_events(self, start=None, end=None):
-        query = "SELECT * FROM special_events WHERE actor=? AND removed IS NULL"
-        args = [self.config.operator_telegram_id]
+        query = "SELECT * FROM special_events WHERE removed IS NULL"
+        args = []
         if start is not None and end is not None:
             query += " AND start<=? AND end>=?"
             args += [end.isoformat(), start.isoformat()]
@@ -294,9 +315,10 @@ class Plan:
             raise PlanError("Special-event titles must be at most 120 characters without control characters.")
         title = title.strip()
         with self.store.transaction():
+            self.authorize(actor)
             row = self.store.db.execute(
-                "SELECT * FROM special_events WHERE actor=? AND start=? AND end=? AND title=? AND removed IS NULL",
-                (actor, start.isoformat(), end.isoformat(), title),
+                "SELECT * FROM special_events WHERE start=? AND end=? AND title=? AND removed IS NULL",
+                (start.isoformat(), end.isoformat(), title),
             ).fetchone()
             if row:
                 return dict(row)
@@ -324,7 +346,8 @@ class Plan:
         values = {"start": start.isoformat(), "end": end.isoformat(), "title": title.strip(),
                   "description": description.strip(), "color": color.lower()}
         with self.store.transaction():
-            row = self.store.db.execute("SELECT * FROM special_events WHERE id=? AND actor=? AND removed IS NULL", (event_id, actor)).fetchone()
+            self.authorize(actor)
+            row = self.store.db.execute("SELECT * FROM special_events WHERE id=? AND removed IS NULL", (event_id,)).fetchone()
             if not row:
                 raise PlanError("Special event not found.")
             unchanged = all(row[key] == value for key, value in values.items())
@@ -333,8 +356,8 @@ class Plan:
             if unchanged:
                 return dict(row)
             self.store.db.execute(
-                "UPDATE special_events SET start=?, end=?, title=?, description=?, color=?, revision=revision+1 WHERE id=? AND actor=?",
-                (*values.values(), event_id, actor),
+                "UPDATE special_events SET start=?, end=?, title=?, description=?, color=?, revision=revision+1 WHERE id=?",
+                (*values.values(), event_id),
             )
             self.store.db.execute("INSERT INTO audit(request_id, actor, action, at) VALUES (?, ?, ?, ?)",
                                   (f"special:{event_id}", actor, "special_updated", self.clock().isoformat()))
@@ -343,7 +366,8 @@ class Plan:
     def remove_special(self, actor, event_id):
         self.authorize(actor)
         with self.store.transaction():
-            row = self.store.db.execute("SELECT * FROM special_events WHERE id=? AND actor=? AND removed IS NULL", (event_id, actor)).fetchone()
+            self.authorize(actor)
+            row = self.store.db.execute("SELECT * FROM special_events WHERE id=? AND removed IS NULL", (event_id,)).fetchone()
             if not row:
                 raise PlanError("Special event not found.")
             self.store.db.execute("UPDATE special_events SET removed=? WHERE id=?", (self.clock().isoformat(), event_id))
@@ -419,6 +443,7 @@ class Plan:
             raise PlanError("Handover times have not been configured yet. Finish setup before making changes.")
         actions = self._validated_actions(actions)
         with self.store.transaction():
+            self.authorize(actor)
             snapshot, cycle_children, has_change = {}, set(), False
             for action in actions:
                 start = date.fromisoformat(action["start"])
@@ -458,6 +483,7 @@ class Plan:
     def confirm(self, actor: int, request_id: str):
         self.authorize(actor)
         with self.store.transaction():
+            self.authorize(actor)
             request = self.request(request_id)
             if request["actor"] != actor:
                 raise PlanError("Only the request's author can confirm it.")
@@ -499,6 +525,7 @@ class Plan:
     def cancel(self, actor, request_id):
         self.authorize(actor)
         with self.store.transaction():
+            self.authorize(actor)
             request = self.request(request_id)
             if request["actor"] != actor or request["status"] != "draft":
                 raise PlanError("Only your draft requests can be cancelled.")

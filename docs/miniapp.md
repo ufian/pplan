@@ -24,7 +24,7 @@ If the NAS or tunnel is unavailable, the app reports a connection error. It does
 
 ## Authentication
 
-The browser sends raw `Telegram.WebApp.initData` in an Authorization header. The NAS validates Telegram's HMAC-SHA-256 signature, checks a one-hour maximum age (30 seconds of future clock tolerance), rejects duplicate fields and malformed users, and allows only `operator_telegram_id`. No token or authorization data is placed in URLs or logs. Reopen the Mini App if authorization expires. Direct browser visits show instructions to open the bot; they cannot read the plan.
+The browser sends raw `Telegram.WebApp.initData` in an Authorization header. The NAS validates Telegram's HMAC-SHA-256 signature, checks a one-hour maximum age (30 seconds of future clock tolerance), rejects duplicate fields and malformed users, and checks current membership on the NAS. The configured owner and the invited second parent have full schedule and special-event access. Revocation immediately blocks further bot and Mini App requests, including old confirmation buttons. The update connection may read membership but cannot change it. No token or authorization data is placed in URLs or logs. Reopen the Mini App if authorization expires. Direct browser visits show instructions to open the bot; they cannot read the plan.
 
 Reference: [Telegram Mini Apps authentication](https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app).
 
@@ -58,9 +58,17 @@ To provision a replacement host, create those directories, configure the restric
 
 Install [pplan-cert-renew.service](../deploy/pplan-cert-renew.service) and [pplan-cert-renew.timer](../deploy/pplan-cert-renew.timer) in `/etc/systemd/system/`; enable the timer. It checks twice daily and reloads nginx after successful renewal checks. Validate ACME with `renew --dry-run` using the same Docker volumes and host network.
 
+## Second-parent invitations
+
+The owner uses `/invite` to generate a 16-character random code (80 bits of entropy), grouped for readability. Only a SHA-256 hash is stored in the invitation table. The plaintext is included in the owner's durable Telegram reply until delivery; never log or publish it. It expires after 24 hours and is consumed atomically by one account. A replacement code invalidates outstanding invitations, and failed join attempts are throttled persistently per Telegram account.
+
+The second parent sends `/join CODE` to the bot in a private chat. Both parents can view and manage the shared calendar, create/edit/remove special events, and propose and confirm schedule changes. Only the request author can confirm their preview. Natural-language context uses the correct parent's identity, with separate clarification histories. Joining also configures that account's Calendar menu button. If the owner's parent identity is not configured, `/invite` asks the owner to choose the configured parent being invited.
+
+Only the owner can issue invitations, inspect `/access`, revoke with `/revoke`, or submit app improvements. There is at most one active second-parent account. Revocation does not delete events or assignments; queued family replies to that account are discarded, and previously signed Mini App credentials cease to grant access. Re-invite to connect a replacement account. Membership and code state stay in the private NAS SQLite database; the public host receives no data copy.
+
 ## Telegram settings
 
-Set **Menu Button** to text `Calendar`, URL `https://pplan.ufian.com:8443/`. The owner-specific button may also be set with Bot API `setChatMenuButton`. **Main App** is optional; use the same URL for a profile launch button. Leave **Same-Origin Restriction** enabled. Neither a profile button nor a public landing page grants other users calendar access.
+Set **Menu Button** to text `Calendar`, URL `https://pplan.ufian.com:8443/`. The owner-specific button may also be set with Bot API `setChatMenuButton`. **Main App** is optional; use the same URL for a profile launch button. Leave **Same-Origin Restriction** enabled. A profile button or public landing page alone does not grant calendar access; the account must be the owner or joined with a valid invitation.
 
 ## Verification and recovery
 

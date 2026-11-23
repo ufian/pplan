@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+from pplan.access import create_invite, redeem_invite, revoke_access
 from pplan.ai import context_for
 from pplan.core import PlanError
 from pplan.parser import HELP, parse_request
@@ -67,13 +68,14 @@ class Bot:
             payload = {"chat_id": chat, "text": chunk}
             if buttons and index == len(chunks) - 1:
                 payload["reply_markup"] = {"inline_keyboard": [buttons]}
-            self.store.enqueue({"method": "sendMessage", "payload": payload})
+            self.store.enqueue({"method": "sendMessage", "payload": payload, "requires_plan_access": self.plan.has_access(chat)})
 
     def show_schedule(self, chat, start, end):
         from pplan.calendar_image import render_calendar
 
         png = render_calendar(self.plan, start, end)
-        self.store.enqueue({"method": "sendPhoto", "payload": {
+        self.plan.authorize(chat)
+        self.store.enqueue({"method": "sendPhoto", "requires_plan_access": True, "payload": {
             "chat_id": chat, "photo_base64": base64.b64encode(png).decode(),
         }})
 
@@ -132,8 +134,8 @@ class Bot:
         text = (message or {}).get("text", "")
         private = chat.get("type") == "private" and chat.get("id") == actor
         result, interpretation_error = None, None
-        # Interpret outside the write transaction. Only the allowlisted private user can use AI.
-        if private and actor == self.plan.config.operator_telegram_id and not callback and isinstance(text, str) and not text.startswith("/"):
+        # Interpret outside the write transaction, then reauthorize before applying any result.
+        if private and self.plan.has_access(actor) and not callback and isinstance(text, str) and not text.startswith("/"):
             try:
                 if not 0 < len(text) <= 2000:
                     raise PlanError("Please keep requests between 1 and 2000 characters.")
@@ -142,8 +144,8 @@ class Bot:
                 except PlanError:
                     if not self.ai:
                         raise
-                    history = json.loads(self.store.get("conversation", "[]"))
-                    result = self.ai.interpret(text, context_for(self.plan, history))
+                    history = json.loads(self.store.get(self.conversation_key(actor), "[]"))
+                    result = self.ai.interpret(text, context_for(self.plan, history, actor))
             except PlanError as exc:
                 interpretation_error = str(exc)
         with self.store.transaction():
@@ -151,11 +153,15 @@ class Bot:
                 if private:
                     if not callback and text == "/whoami":
                         self.say(actor, f"Your Telegram user ID: {actor}")
+                    elif not callback and self.join_command(actor, text):
+                        pass
                     else:
                         self.plan.authorize(actor)
                         if callback:
                             action, request_id = callback.get("data", "").split(":", 1)
-                            if action == "confirm":
+                            if action == "invite":
+                                self.invite(actor, request_id)
+                            elif action == "confirm":
                                 self.plan.confirm(actor, request_id)
                                 self.say(actor, "Schedule updated. Use /schedule for a fresh calendar. Google Calendar will sync when connected; use /status to check.")
                             elif action == "cancel":
@@ -176,11 +182,52 @@ class Bot:
                 self.store.enqueue({"method": "answerCallbackQuery", "payload": {"callback_query_id": callback["id"]}})
             self.store.set("telegram_offset", update_id + 1)
 
+    def conversation_key(self, actor):
+        return "conversation" if actor == self.plan.config.operator_telegram_id else f"conversation:{actor}"
+
+    def join_command(self, actor, text):
+        if not isinstance(text, str):
+            return False
+        parts = text.split(maxsplit=1)
+        command = parts[0].split("@")[0] if parts else ""
+        if command == "/join" or (command == "/start" and len(parts) == 2):
+            if len(parts) != 2:
+                raise PlanError("Use /join followed by the invitation code from the plan owner.")
+            code = parts[1].removeprefix("join_")
+            joined = redeem_invite(self.plan, actor, code)
+            self.say(actor, "You are connected as " + self.plan.config.parents[joined["parent_id"]]
+                     + ". You can manage the shared schedule and special events. Schedule changes require your own Confirm button.")
+            url = os.environ.get("PPLAN_MINIAPP_URL", "")
+            if url.startswith("https://"):
+                self.store.enqueue({"method": "setChatMenuButton", "requires_plan_access": True, "payload": {
+                    "chat_id": actor, "menu_button": {"type": "web_app", "text": "Calendar", "web_app": {"url": url}}}})
+                self.say(actor, "Open the family calendar.", [{"text": "Open calendar", "web_app": {"url": url}}])
+            if joined["new"]:
+                self.say(self.plan.config.operator_telegram_id,
+                         f"Second parent connected: {self.plan.config.parents[joined['parent_id']]} (Telegram ID {actor}). Full schedule and special-event access enabled. Use /revoke to remove access.")
+            return True
+        if command in ("/start", "/help") and not self.plan.has_access(actor):
+            self.say(actor, "This is a private family bot. Ask the owner for an invitation code, then send /join CODE.")
+            return True
+        return False
+
+    def invite(self, actor, parent_id=None):
+        self.plan.authorize_owner(actor)
+        if parent_id is None and not self.plan.config.operator_parent_id:
+            self.say(actor, "Choose which configured parent to invite:",
+                     [{"text": name, "callback_data": "invite:" + key} for key, name in self.plan.config.parents.items()])
+            return
+        invitation = create_invite(self.plan, actor, parent_id)
+        self.say(actor, "Invitation for " + self.plan.config.parents[invitation["parent_id"]]
+                 + f" · full access\n\nCode: {invitation['code']}\nExpires: {invitation['expires']}\n\n"
+                 + "Share this code privately. The second parent should send /join " + invitation["code"]
+                 + " to this bot. The code works once. Creating another invitation invalidates the old one.")
+
     def apply_interpretation(self, actor, text, result):
         if result["action"] == "clarify":
-            history = json.loads(self.store.get("conversation", "[]"))
+            history = json.loads(self.store.get(self.conversation_key(actor), "[]"))
             history += [{"role": "user", "text": text}, {"role": "assistant", "text": result["question"]}]
-            self.store.set("conversation", json.dumps(history[-6:]))
+            self.store.set(self.conversation_key(actor), json.dumps(history[-6:]))
             self.say(actor, result["question"])
             return
         if result["action"] == "changes":
@@ -193,15 +240,29 @@ class Bot:
             else:
                 request = self.plan.draft(actor, start, end, result["parent"], result["children"])
                 self.preview(actor, request)
-        self.store.set("conversation", "[]")
+        self.store.set(self.conversation_key(actor), "[]")
 
     def command(self, actor, text):
+        self.plan.authorize(actor)
         parts = text.split()
         command = parts[0].split("@")[0]
-        if command in ("/start", "/help"):
+        if command == "/invite":
+            value = text.split(maxsplit=1)[1].strip() if len(parts) > 1 else None
+            aliases = {alias.casefold(): key for key, name in self.plan.config.parents.items() for alias in (key, name)}
+            self.invite(actor, aliases.get(value.casefold(), value) if value else None)
+        elif command == "/revoke":
+            if len(parts) != 1:
+                raise PlanError("Use /revoke to remove second-parent access and invalidate invitations.")
+            revoke_access(self.plan, actor)
+            self.say(actor, "Second-parent access and invitation codes revoked. Family schedule and events are unchanged.")
+        elif command == "/access":
+            self.plan.authorize_owner(actor)
+            row = self.store.db.execute("SELECT * FROM family_members WHERE revoked IS NULL").fetchone()
+            self.say(actor, (f"Connected parent: {self.plan.config.parents[row['parent_id']]}\nTelegram ID: {row['telegram_id']}\nPermissions: manage schedule and special events.\nUse /revoke to remove access." if row else "No second parent connected. Use /invite to create a code."))
+        elif command in ("/start", "/help"):
             config = self.plan.config
             members = f"Parents: {', '.join(config.parents.values())}\nChildren: {', '.join(config.children.values())}"
-            self.say(actor, "Parenting Plan · solo mode\n" + members + "\n\n" + HELP)
+            self.say(actor, "Parenting Plan\n" + members + "\n\n" + HELP)
         elif command == "/calendar":
             url = os.environ.get("PPLAN_MINIAPP_URL", "")
             if not url.startswith("https://"):
@@ -216,7 +277,7 @@ class Bot:
                 raise PlanError("Use /schedule or /schedule YYYY-MM-DD YYYY-MM-DD.")
             self.show_schedule(actor, start, end)
         elif command == "/requests":
-            rows = self.store.db.execute("SELECT * FROM requests ORDER BY rowid DESC LIMIT 5").fetchall()
+            rows = self.store.db.execute("SELECT * FROM requests WHERE actor=? ORDER BY rowid DESC LIMIT 5", (actor,)).fetchall()
             if not rows:
                 self.say(actor, "No change requests yet.")
             for row in rows:
@@ -267,6 +328,7 @@ class Bot:
             request_id = enqueue_improvement(self.plan, actor, message)
             self.say(actor, f"Improvement #{request_id} saved for your Codex chat. It will be picked up when work continues there. Use /improvements to check its status.")
         elif command == "/improvements":
+            self.plan.authorize_owner(actor)
             rows = self.store.db.execute(
                 "SELECT id, message, status, result FROM improvements WHERE actor=? ORDER BY id DESC LIMIT 5", (actor,)
             ).fetchall()
@@ -287,6 +349,9 @@ class Bot:
     def flush(self):
         for row in self.store.db.execute("SELECT * FROM outbox ORDER BY id LIMIT 50").fetchall():
             job = json.loads(row["payload"])
+            if job.get("requires_plan_access") and not self.plan.has_access(job["payload"].get("chat_id")):
+                self.store.db.execute("DELETE FROM outbox WHERE id=?", (row["id"],))
+                continue
             try:
                 self.client.call(job["method"], job["payload"])
             except TelegramError as exc:

@@ -31,7 +31,7 @@ def event_write_authorizer(action, table, column, database, source):
                sqlite3.SQLITE_FUNCTION}
     if action in allowed:
         return sqlite3.SQLITE_OK
-    if action == sqlite3.SQLITE_READ and table in {"settings", "special_events"}:
+    if action == sqlite3.SQLITE_READ and table in {"settings", "special_events", "family_members"}:
         return sqlite3.SQLITE_OK
     if action == sqlite3.SQLITE_UPDATE and table == "special_events" and column in {"start", "end", "title", "description", "color", "revision"}:
         return sqlite3.SQLITE_OK
@@ -40,7 +40,7 @@ def event_write_authorizer(action, table, column, database, source):
     return sqlite3.SQLITE_DENY
 
 
-def update_event(config, database, body):
+def update_event(config, database, body, actor=None):
     fields = {"id", "start", "end", "title", "description", "color", "revision"}
     if set(body) != fields:
         raise PlanError("Invalid special-event fields.")
@@ -54,13 +54,13 @@ def update_event(config, database, body):
     try:
         store.db.set_authorizer(event_write_authorizer)
         plan = Plan(config, store, initialize=False)
-        return event_data(plan.update_special(config.operator_telegram_id, body["id"], start, end,
+        return event_data(plan.update_special(config.operator_telegram_id if actor is None else actor, body["id"], start, end,
                           body["title"], body["description"], body["color"], expected_revision=body["revision"]))
     finally:
         store.close()
 
 
-def authorize_init_data(raw, token, operator, now=None):
+def authorize_init_data(raw, token, operator=None, now=None):
     """Verify Telegram's HMAC, freshness and the configured operator allowlist."""
     try:
         if not isinstance(raw, str) or not 0 < len(raw) <= 12000:
@@ -77,11 +77,11 @@ def authorize_init_data(raw, token, operator, now=None):
             raise ValueError()
         age = (time.time() if now is None else now) - int(fields["auth_date"])
         user = json.loads(fields["user"])
-        if not -30 <= age <= 3600 or type(user.get("id")) is not int or user["id"] != operator:
+        if not -30 <= age <= 3600 or type(user.get("id")) is not int or (operator is not None and user["id"] != operator):
             raise ValueError()
     except (ValueError, KeyError, TypeError, AttributeError):
         raise PlanError("Open the calendar from your private bot chat. If it expired, close and reopen it.") from None
-    return operator
+    return user["id"]
 
 
 def calendar_data(plan, month):
@@ -163,7 +163,12 @@ def make_handler(config, database, token):
                 return
             try:
                 authorization = self.headers.get("Authorization", "")
-                authorize_init_data(authorization.removeprefix("tma ") if authorization.startswith("tma ") else "", token, config.operator_telegram_id)
+                actor = authorize_init_data(authorization.removeprefix("tma ") if authorization.startswith("tma ") else "", token)
+                check_store = Store(database, read_only=True)
+                try:
+                    Plan(config, check_store).authorize(actor)
+                finally:
+                    check_store.close()
             except PlanError as exc:
                 self.reply(401, {"error": str(exc)})
                 return
@@ -175,12 +180,13 @@ def make_handler(config, database, token):
                 if not isinstance(body, dict):
                     raise ValueError()
                 if self.path == "/api/specials/update":
-                    self.reply(200, {"event": update_event(config, database, body)})
+                    self.reply(200, {"event": update_event(config, database, body, actor)})
                     return
                 store = Store(database, read_only=True)
                 try:
                     store.db.execute("BEGIN")
                     plan = Plan(config, store)
+                    plan.authorize(actor)
                     data = ({"events": [event_data(event) for event in plan.special_events()]}
                             if self.path == "/api/specials/list" else
                             calendar_data(plan, body.get("month", plan.today().strftime("%Y-%m"))))

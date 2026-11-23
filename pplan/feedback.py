@@ -9,7 +9,7 @@ from pplan.core import Config, Plan, PlanError, Store
 
 
 def enqueue_improvement(plan, actor, message):
-    plan.authorize(actor)
+    plan.authorize_owner(actor)
     message = message.strip()
     if not 1 <= len(message) <= 12000:
         raise PlanError("Describe the improvement in 1–12000 characters.")
@@ -29,7 +29,7 @@ def list_improvements(plan, include_completed=False):
 
 
 def update_improvement(plan, actor, request_id, status, result=None):
-    plan.authorize(actor)
+    plan.authorize_owner(actor)
     allowed = {"in_progress": {"queued"}, "completed": {"in_progress"},
                "needs_input": {"in_progress"}, "queued": {"in_progress", "needs_input"}}
     if status not in allowed:

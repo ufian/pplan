@@ -9,6 +9,7 @@ import tempfile
 from urllib.request import Request, urlopen
 
 from pplan.core import PlanError
+from pplan.access import parent_for_actor
 
 
 LEGACY_KEYS = {"action", "start", "end", "parent", "children", "question"}
@@ -162,12 +163,13 @@ def validate_actions(actions, parents, children):
             raise PlanError("AI returned an unsupported change action.")
 
 
-def context_for(plan, conversation):
+def context_for(plan, conversation, actor=None):
     start = max(plan.today(), plan.config.anchor_date)
     return {
         "today": plan.today().isoformat(), "timezone": plan.config.timezone,
         "parents": plan.config.parents, "children": plan.config.children,
-        "operator_parent_id": plan.config.operator_parent_id,
+        "operator_parent_id": (parent_for_actor(plan, actor)
+                               if actor is not None else plan.config.operator_parent_id),
         "repeating_cycles": {child: plan.repeating_pattern(child) for child in plan.config.children},
         "handover": {"school_day_times": plan.config.school_handover_times,
                      "confirmed": plan.config.handover_confirmed,

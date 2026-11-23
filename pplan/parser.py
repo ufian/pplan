@@ -17,6 +17,10 @@ HELP = """Commands:
 /improve <request> — request a change to the app
 /improvements — app improvement status
 /status — calendar sync status
+/invite [parent] — owner: create a one-time second-parent code
+/join CODE — connect using an invitation
+/access — owner: show connected parent
+/revoke — owner: revoke second-parent access and invitations
 /whoami — your Telegram user ID
 
 Send a natural-language request when AI is connected.
@@ -29,7 +33,7 @@ Overwrite YYYY-MM-DD through YYYY-MM-DD to <parent> for both
 
 Use configured names or IDs. Dates are inclusive handover dates.
 Each period ends at the next day's handover.
-Review the exact times and children, then press Confirm. Only you approve changes."""
+Review the exact times and children, then press Confirm. Only the request author can confirm their changes."""
 
 
 def parse_request(text, config):

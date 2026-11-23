@@ -1,13 +1,13 @@
 # Parenting Plan
 
-A Python, Telegram-first parenting schedule for a family with two children. One operator manages the plan; the other parent does not need to approve changes or use Telegram.
+A Python, Telegram-first parenting schedule for a family with two children. The owner manages the plan; a second parent can optionally join through a one-time invitation. Each author confirms their own schedule changes.
 
 Each child has an independent assignment. A handover date labels the period from that day's after-school handover to the next day's handover, rather than midnight to midnight. The school-day times, non-school time, school holidays, family timezone, names, identities, and repeating schedule are configuration data.
 
 ## Current implementation
 
 - A repeating baseline, confirmed child-specific exceptions, and future-dated repeating schedule changes.
-- A private Telegram bot restricted to one configured user ID.
+- A private Telegram bot for the configured owner and one second parent connected with a one-time invitation.
 - Free-form messages interpreted by Codex CLI with ChatGPT subscription authentication.
 - Exact previews with children, parent, date range, times, and timezone; changes apply only after **your** confirmation.
 - Multiple periods and repeating rules from one message, with one atomic confirmation for the full action list.
@@ -45,7 +45,7 @@ Initial setup may change until the first request is created. Thereafter the appl
 
 ## Telegram and NAS deployment
 
-See [deployment instructions](docs/deployment.md). Create a bot through [BotFather](https://t.me/BotFather), store its token in `secrets/telegram_bot_token`, and send `/start` to the bot. `/whoami` returns only the sender's own Telegram ID; all plan access is allowlisted. Group messages are ignored. The bot uses [Telegram long polling](https://core.telegram.org/bots/api#getupdates), so no inbound port or public domain is needed.
+See [deployment instructions](docs/deployment.md). Create a bot through [BotFather](https://t.me/BotFather), store its token in `secrets/telegram_bot_token`, and send `/start` to the bot. `/whoami` returns only the sender's own Telegram ID; all plan access is allowlisted. Use `/invite` as the owner to generate a one-time code, then share it privately. The second parent sends `/join CODE` in a private chat with the same bot and receives full schedule and special-event access. Codes expire after 24 hours; a new code invalidates the previous one. `/access` shows the connected account; `/revoke` removes its access and invalidates codes without changing family data. Invitation administration and `/improve` remain owner-only. Both parents confirm their own schedule requests; one cannot confirm the other's preview. Group messages are ignored. The bot uses [Telegram long polling](https://core.telegram.org/bots/api#getupdates), so no inbound port or public domain is needed.
 
 ```sh
 docker compose build
