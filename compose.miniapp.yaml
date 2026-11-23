@@ -19,7 +19,7 @@ services:
     secrets: [telegram_bot_token]
     volumes:
       - ./config.json:/config/config.json:ro
-      - ./data/bot:/data:ro
+      - ./data/bot:/data
       - ./pplan:/app/pplan:ro
       - ./tests:/app/tests:ro
     healthcheck:

@@ -1,4 +1,4 @@
-"""Read-only Telegram Mini App; family data and bot credentials stay on the NAS."""
+"""Telegram calendar and special-event editor; family data and bot credentials stay on the NAS."""
 
 import argparse
 import calendar
@@ -11,12 +11,53 @@ import logging
 import os
 from pathlib import Path
 import re
+import sqlite3
 import time
 from urllib.parse import parse_qsl, urlsplit
 
-from pplan.core import Config, Plan, PlanError, Store
+from pplan.core import Config, Plan, PlanError, SpecialEventConflict, Store
 
 ASSETS = Path(__file__).with_name("web")
+EVENT_FIELDS = ("id", "start", "end", "title", "description", "color", "revision")
+
+
+def event_data(event):
+    return {key: event[key] for key in EVENT_FIELDS}
+
+
+def event_write_authorizer(action, table, column, database, source):
+    """The editor connection can only update events and append audit entries."""
+    allowed = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
+               sqlite3.SQLITE_FUNCTION}
+    if action in allowed:
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_READ and table in {"settings", "special_events"}:
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_UPDATE and table == "special_events" and column in {"start", "end", "title", "description", "color", "revision"}:
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_INSERT and table == "audit":
+        return sqlite3.SQLITE_OK
+    return sqlite3.SQLITE_DENY
+
+
+def update_event(config, database, body):
+    fields = {"id", "start", "end", "title", "description", "color", "revision"}
+    if set(body) != fields:
+        raise PlanError("Invalid special-event fields.")
+    try:
+        start, end = date.fromisoformat(body["start"]), date.fromisoformat(body["end"])
+        if start.isoformat() != body["start"] or end.isoformat() != body["end"]:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise PlanError("Event dates must use YYYY-MM-DD.") from None
+    store = Store(database, initialize=False)
+    try:
+        store.db.set_authorizer(event_write_authorizer)
+        plan = Plan(config, store, initialize=False)
+        return event_data(plan.update_special(config.operator_telegram_id, body["id"], start, end,
+                          body["title"], body["description"], body["color"], expected_revision=body["revision"]))
+    finally:
+        store.close()
 
 
 def authorize_init_data(raw, token, operator, now=None):
@@ -64,7 +105,7 @@ def calendar_data(plan, month):
             result.append({"date": day.isoformat(), "before": before, "after": after,
                            "handover": plan.config.boundary(day).isoformat(),
                            "until": plan.config.boundary(day + timedelta(days=1)).isoformat(),
-                           "events": [{"id": e["id"], "title": e["title"] or "Special event"} for e in events if e["start"] <= day.isoformat() <= e["end"]]})
+                           "events": [event_data(e) for e in events if e["start"] <= day.isoformat() <= e["end"]]})
     return {"month": month, "today": plan.today().isoformat(), "timezone": plan.config.timezone,
             "parents": plan.config.parents, "children": plan.config.children,
             "handover_confirmed": plan.config.handover_confirmed,
@@ -117,7 +158,7 @@ def make_handler(config, database, token):
             self.reply(200, (ASSETS / name).read_bytes(), kind)
 
         def do_POST(self):
-            if self.path != "/api/calendar":
+            if self.path not in {"/api/calendar", "/api/specials/list", "/api/specials/update"}:
                 self.reply(404, {"error": "Not found."})
                 return
             try:
@@ -128,19 +169,26 @@ def make_handler(config, database, token):
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= 256 or self.headers.get_content_type() != "application/json":
+                if not 0 < length <= (16384 if self.path == "/api/specials/update" else 256) or self.headers.get_content_type() != "application/json":
                     raise ValueError()
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
                     raise ValueError()
+                if self.path == "/api/specials/update":
+                    self.reply(200, {"event": update_event(config, database, body)})
+                    return
                 store = Store(database, read_only=True)
                 try:
                     store.db.execute("BEGIN")
                     plan = Plan(config, store)
-                    data = calendar_data(plan, body.get("month", plan.today().strftime("%Y-%m")))
+                    data = ({"events": [event_data(event) for event in plan.special_events()]}
+                            if self.path == "/api/specials/list" else
+                            calendar_data(plan, body.get("month", plan.today().strftime("%Y-%m"))))
                 finally:
                     store.close()
                 self.reply(200, data)
+            except SpecialEventConflict as exc:
+                self.reply(409, {"error": str(exc)})
             except PlanError as exc:
                 self.reply(400, {"error": str(exc)})
             except (ValueError, TypeError):

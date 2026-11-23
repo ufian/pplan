@@ -199,10 +199,10 @@ def render_calendar(plan, start: date, end: date):
                     box_y = top + week_index * row
                     bounds = (panel_x + columns[0] * cell, box_y - 2,
                               panel_x + (columns[-1] + 1) * cell - 3, box_y + row - 5)
-                    draw.rounded_rectangle(bounds, radius=12, outline=SPECIAL_COLOR, width=3)
+                    draw.rounded_rectangle(bounds, radius=12, outline=event["color"], width=3)
     summary_top = height - NIGHTS_SECTION_HEIGHT
     if events:
-        label(margin, summary_top - 36, "Purple frames mark special events.", 21, SPECIAL_COLOR)
+        label(margin, summary_top - 36, "Colored frames mark special events.", 21, SPECIAL_COLOR)
 
     summary_width = width - 2 * margin
     label(margin, summary_top, "Scheduled nights by child", 36, bold=True)

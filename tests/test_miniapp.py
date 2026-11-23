@@ -121,3 +121,45 @@ class MiniAppTests(Fixture):
             bot.command(42,"/calendar")
         job=json.loads(self.store.db.execute("SELECT payload FROM outbox").fetchone()[0])
         self.assertEqual(job["payload"]["reply_markup"]["inline_keyboard"][0][0]["web_app"]["url"],"https://calendar.example:8443")
+
+    def test_special_editor_http_auth_validation_conflicts_and_day_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"plan.sqlite3"
+            writer=Store(path);plan=Plan(self.config,writer,lambda:self.now)
+            event=plan.add_special(42,self.start,self.start,"Before")
+            server=ThreadingHTTPServer(("127.0.0.1",0),make_handler(self.config,path,TOKEN))
+            thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+            base=f"http://127.0.0.1:{server.server_port}"
+            def call(route,body,actor=42,raw=None):
+                request=Request(base+route,data=json.dumps(body).encode(),headers={"Content-Type":"application/json","Authorization":"tma "+(signed(actor) if raw is None else raw)})
+                try:
+                    with urlopen(request) as response:return response.status,json.load(response)
+                except HTTPError as exc:return exc.code,json.load(exc)
+            try:
+                body={key:event[key] for key in ("id","start","end","title","description","color","revision")}
+                body.update(start="2026-12-02",end="2026-12-05",title="After",description="Notes\nSecond line",color="#cf3b70")
+                for route in ("/api/specials/list","/api/specials/update"):
+                    self.assertEqual(call(route,body,actor=99)[0],401)
+                    self.assertEqual(call(route,body,raw=signed(at=0))[0],401)
+                    self.assertEqual(call(route,body,raw="")[0],401)
+                self.assertEqual(call("/api/specials/update",dict(body,parent="p2"))[0],400)
+                self.assertEqual(call("/api/specials/update",dict(body,color="not-a-color"))[0],400)
+                self.assertEqual(call("/api/specials/update",dict(body,start="20261202"))[0],400)
+                self.assertEqual(call("/api/specials/update",dict(body,id=True))[0],400)
+                self.assertEqual(call("/api/specials/update",dict(body,revision=0))[0],400)
+                status,updated=call("/api/specials/update",body)
+                self.assertEqual(status,200)
+                self.assertEqual(updated["event"]["revision"],2)
+                self.assertEqual(call("/api/specials/update",body),(200,updated))
+                self.assertEqual(call("/api/specials/update",dict(body,title="Conflicting"))[0],409)
+                status,result=call("/api/specials/list",{})
+                self.assertEqual((status,len(result["events"])),(200,1))
+                self.assertEqual(result["events"][0],updated["event"])
+                status,result=call("/api/calendar",{"month":"2026-12"})
+                day=next(d for d in result["days"] if d["date"]=="2026-12-02")
+                self.assertEqual(day["events"][0],updated["event"])
+                self.assertEqual(sum(result["totals"]["c1"].values()),31)
+                self.assertEqual(writer.db.execute("SELECT count(*) FROM requests").fetchone()[0],0)
+                self.assertEqual(writer.db.execute("SELECT count(*) FROM overrides").fetchone()[0],0)
+            finally:
+                server.shutdown();server.server_close();thread.join();writer.close()

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import date, datetime, time, timedelta, timezone
 import hashlib
 import json
+import re
 from pathlib import Path
 import sqlite3
 from uuid import uuid4
@@ -13,6 +14,10 @@ from zoneinfo import ZoneInfo
 
 class PlanError(ValueError):
     """An actionable error that is safe to display to the operator."""
+
+
+class SpecialEventConflict(PlanError):
+    """An event changed since the editor loaded it."""
 
 
 @dataclass(frozen=True)
@@ -107,12 +112,17 @@ def days(start: date, end: date):
 
 
 class Store:
-    def __init__(self, path: str | Path, *, read_only=False):
+    def __init__(self, path: str | Path, *, read_only=False, initialize=True):
         self.read_only = read_only
         if read_only:
             self.db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, isolation_level=None)
             self.db.row_factory = sqlite3.Row
             self.db.execute("PRAGMA query_only=ON")
+            self.db.execute("PRAGMA busy_timeout=5000")
+            return
+        if not initialize:
+            self.db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=rw", uri=True, isolation_level=None)
+            self.db.row_factory = sqlite3.Row
             self.db.execute("PRAGMA busy_timeout=5000")
             return
         if str(path) != ":memory:":
@@ -138,7 +148,9 @@ class Store:
             );
             CREATE TABLE IF NOT EXISTS special_events (
                 id INTEGER PRIMARY KEY, actor INTEGER NOT NULL, start TEXT NOT NULL,
-                end TEXT NOT NULL, title TEXT NOT NULL, created TEXT NOT NULL, removed TEXT
+                end TEXT NOT NULL, title TEXT NOT NULL, created TEXT NOT NULL, removed TEXT,
+                description TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#7845a6',
+                revision INTEGER NOT NULL DEFAULT 1
             );
             CREATE TABLE IF NOT EXISTS audit (
                 id INTEGER PRIMARY KEY, request_id TEXT NOT NULL, actor INTEGER NOT NULL,
@@ -159,6 +171,12 @@ class Store:
         with self.transaction():
             if "actions" not in {row["name"] for row in self.db.execute("PRAGMA table_info(requests)")}:
                 self.db.execute("ALTER TABLE requests ADD COLUMN actions TEXT")
+            event_columns = {row["name"] for row in self.db.execute("PRAGMA table_info(special_events)")}
+            for name, declaration in (("description", "TEXT NOT NULL DEFAULT ''"),
+                                      ("color", "TEXT NOT NULL DEFAULT '#7845a6'"),
+                                      ("revision", "INTEGER NOT NULL DEFAULT 1")):
+                if name not in event_columns:
+                    self.db.execute(f"ALTER TABLE special_events ADD COLUMN {name} {declaration}")
         if str(path) != ":memory:":
             Path(path).chmod(0o600)
 
@@ -194,11 +212,11 @@ class Store:
 
 
 class Plan:
-    def __init__(self, config: Config, store: Store, clock=None):
+    def __init__(self, config: Config, store: Store, clock=None, *, initialize=True):
         config.validate()
         self.config, self.store = config, store
         self.clock = clock or (lambda: datetime.now(timezone.utc))
-        if store.read_only:
+        if store.read_only or not initialize:
             if store.get("config_fingerprint") != config.fingerprint():
                 raise PlanError("Calendar configuration does not match the database.")
             return
@@ -287,6 +305,40 @@ class Plan:
                 (actor, start.isoformat(), end.isoformat(), title, self.clock().isoformat()),
             )
             return dict(self.store.db.execute("SELECT * FROM special_events WHERE id=?", (cursor.lastrowid,)).fetchone())
+
+    def update_special(self, actor, event_id, start, end, title, description, color, *, expected_revision):
+        """Edit event metadata atomically; parenting assignments remain untouched."""
+        self.authorize(actor)
+        if type(event_id) is not int or event_id <= 0 or type(expected_revision) is not int or expected_revision <= 0:
+            raise PlanError("Invalid special event or revision.")
+        if type(start) is not date or type(end) is not date or end < start or (end - start).days > 365:
+            raise PlanError("Choose an ordered special-event range of at most 366 days.")
+        if not 1901 <= start.year <= end.year <= 2099:
+            raise PlanError("Choose event dates between 1901 and 2099.")
+        if not isinstance(title, str) or len(title) > 120 or any(ord(c) < 32 for c in title):
+            raise PlanError("Special-event titles must be at most 120 characters without control characters.")
+        if not isinstance(description, str) or len(description) > 2000 or any(ord(c) < 32 and c not in "\n\t" for c in description):
+            raise PlanError("Descriptions must be at most 2000 characters without control characters except line breaks and tabs.")
+        if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise PlanError("Choose a color in #RRGGBB format.")
+        values = {"start": start.isoformat(), "end": end.isoformat(), "title": title.strip(),
+                  "description": description.strip(), "color": color.lower()}
+        with self.store.transaction():
+            row = self.store.db.execute("SELECT * FROM special_events WHERE id=? AND actor=? AND removed IS NULL", (event_id, actor)).fetchone()
+            if not row:
+                raise PlanError("Special event not found.")
+            unchanged = all(row[key] == value for key, value in values.items())
+            if row["revision"] != expected_revision and not unchanged:
+                raise SpecialEventConflict("This event changed elsewhere. Close and reopen the editor before saving.")
+            if unchanged:
+                return dict(row)
+            self.store.db.execute(
+                "UPDATE special_events SET start=?, end=?, title=?, description=?, color=?, revision=revision+1 WHERE id=? AND actor=?",
+                (*values.values(), event_id, actor),
+            )
+            self.store.db.execute("INSERT INTO audit(request_id, actor, action, at) VALUES (?, ?, ?, ?)",
+                                  (f"special:{event_id}", actor, "special_updated", self.clock().isoformat()))
+            return dict(self.store.db.execute("SELECT * FROM special_events WHERE id=?", (event_id,)).fetchone())
 
     def remove_special(self, actor, event_id):
         self.authorize(actor)
