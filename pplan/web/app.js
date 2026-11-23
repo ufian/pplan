@@ -9,7 +9,7 @@ const fmtDay=new Intl.DateTimeFormat("en-US",{weekday:"long",month:"long",day:"n
 const utc=value=>new Date(value+"T12:00:00Z");
 const element=(tag,text,className)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(className)el.className=className;return el;};
 function shiftMonth(month,offset){const d=utc(month+"-01");d.setUTCMonth(d.getUTCMonth()+offset);return d.toISOString().slice(0,7);}
-function parentColor(id){const i=Object.keys(data.parents).indexOf(id);return i<0?"var(--empty)":`var(--p${i})`;}
+function parentColor(id){return data.parent_colors[id]||"var(--empty)";}
 function swatch(id){const s=element("span",undefined,"swatch");s.style.background=parentColor(id);return s;}
 function name(id){return data.parents[id]||"Unassigned";}
 function timestamp(value){return new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",timeZone:data.timezone}).format(new Date(value));}
@@ -55,7 +55,7 @@ async function load(month){
   eventEdits.clear();const version=++generation;busy=true;$("status").className="";$("status").textContent="Loading calendar…";$("retry").hidden=true;
   try{
     const value=await fetchMonth(month);if(version!==generation)return;
-    data=value;months.clear();months.set(value.month,value);selected=undefined;$("months").replaceChildren(renderMonth(value));updateNavigation(value.month);renderFilters();$("app").hidden=false;
+    data=value;renderPalette();months.clear();months.set(value.month,value);selected=undefined;$("months").replaceChildren(renderMonth(value));updateNavigation(value.month);renderFilters();$("app").hidden=false;
     $("status").textContent=value.handover_confirmed?"":"Setup pending: handover times are examples until confirmed.";window.scrollTo({top:0});
   }catch(exc){if(version===generation)error(exc instanceof TypeError?"Cannot connect to your calendar. Please try Refresh in the menu.":exc.message);}
   finally{if(version===generation){busy=false;observer.unobserve($("load-more"));observer.observe($("load-more"));}}
@@ -143,8 +143,13 @@ async function saveEvent(e){
   }catch(exc){$("event-error").textContent=exc instanceof TypeError?"Connection lost. Try saving again; duplicate saves are safe.":exc.message;}
   finally{savingEvent=false;$("event-fields").disabled=false;$("save-event").disabled=false;$("close-editor").disabled=false;$("cancel-editor").disabled=false;$("save-event").textContent="Save changes";}
 }
-const palette=[["#7845a6","Purple"],["#2563eb","Blue"],["#17856b","Green"],["#ca5135","Orange"],["#cf3b70","Pink"],["#a66a06","Gold"]];
-for(const [color,label] of palette){const b=element("button");b.type="button";b.dataset.color=color;b.style.background=color;b.setAttribute("aria-label",label);b.onclick=()=>{$("event-color").value=color;updateEventPreview();};$("event-palette").append(b);}
+function renderPalette(){
+  $("event-color").replaceChildren(...data.palette.map(item=>{const option=element("option",item.name);option.value=item.color;return option;}));
+  $("event-palette").replaceChildren(...data.palette.map(item=>{
+    const b=element("button");b.type="button";b.dataset.color=item.color;b.style.background=item.color;b.setAttribute("aria-label",item.name);b.title=item.name;
+    b.onclick=()=>{$("event-color").value=item.color;updateEventPreview();};return b;
+  }));
+}
 $("specials-button").onclick=showSpecials;$("close-specials").onclick=()=>$("specials-dialog").close();
 $("close-editor").onclick=$("cancel-editor").onclick=()=>{if(!savingEvent)$("event-editor").close();};
 $("event-editor").addEventListener("cancel",e=>{if(savingEvent)e.preventDefault();});

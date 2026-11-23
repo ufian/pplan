@@ -6,11 +6,12 @@ from io import BytesIO
 from pathlib import Path
 
 from pplan.core import PlanError
+from pplan.colors import BY_ID, DEFAULT_SPECIAL, PARENT_IDS
 
 MONTHS = ("", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
-COLORS = (("#17695e", "#e3f3ed"), ("#ad4c32", "#fcebe2"))
-SPECIAL_COLOR = "#7845a6"
+COLORS = tuple(("#162d3d", BY_ID[key]["color"]) for key in PARENT_IDS)
+SPECIAL_COLOR = DEFAULT_SPECIAL
 MAX_CALENDAR_DAYS = 700
 NIGHTS_BLOCK_HEIGHT = 212
 NIGHTS_BLOCK_GAP = 16

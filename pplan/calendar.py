@@ -14,6 +14,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from pplan.core import PlanError, days
+from pplan.colors import google_color, parent_palette
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.app.created"]
 EVENT_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
@@ -174,8 +175,16 @@ class CalendarSync:
             return []
         return children if children and len(set(children)) == len(children) and all(c in self.plan.config.children for c in children) else []
 
-    def owned_events(self, path):
-        """List only this plan's known schedule formats, excluding unrelated/special events."""
+    def _special_id(self, event):
+        private = event.get("extendedProperties", {}).get("private", {})
+        value = private.get("special_id", "")
+        if (private.get("pplan") == self.store.get("plan_id") and private.get("format") == "specials-v1"
+                and re.fullmatch(r"[0-9a-f]{32}", event.get("id", "")) and re.fullmatch(r"[1-9][0-9]*", value)):
+            return int(value)
+        return None
+
+    def owned_events(self, path, specials=False):
+        """List only the requested recognized format belonging to this plan."""
         result, page, seen = {}, None, set()
         while True:
             query = {"privateExtendedProperty": "pplan=" + self.store.get("plan_id"), "maxResults": 2500,
@@ -186,7 +195,8 @@ class CalendarSync:
             if status != 200 or not isinstance(body, dict):
                 raise PlanError(f"Could not inspect managed Google events (status {status}).")
             for event in body.get("items", []):
-                if self._children(event):
+                owned = self._special_id(event) is not None if specials else bool(self._children(event))
+                if owned:
                     result[event["id"]] = event
             page = body.get("nextPageToken")
             if not page:
@@ -258,6 +268,7 @@ class CalendarSync:
         config = self.plan.config
         return {"id": event_id,
                 "summary": " and ".join(config.children[c] for c in period["children"]) + " with " + config.parents[period["parent"]],
+                "colorId": parent_palette(config.parents)[period["parent"]]["id"],
                 "description": "Confirmed continuous parenting period. Edit through the bot; calendar edits are not imported.",
                 "start": {"dateTime": config.boundary(period["start"]).isoformat(), "timeZone": config.timezone},
                 "end": {"dateTime": config.boundary(period["end"]).isoformat(), "timeZone": config.timezone},
@@ -295,6 +306,42 @@ class CalendarSync:
             return event["id"], 1
         raise PlanError("Could not repair a deleted Google event. Retry synchronization.")
 
+    def special_event(self, special, event_id):
+        return {"id": event_id, "summary": special["title"] or "Special event",
+                "description": special["description"], "colorId": google_color(special["color"])["id"],
+                "start": {"date": special["start"]},
+                "end": {"date": (date.fromisoformat(special["end"])+timedelta(days=1)).isoformat()},
+                "transparency": "transparent",
+                "extendedProperties": {"private": {"pplan": self.store.get("plan_id"), "format": "specials-v1",
+                                                   "special_id": str(special["id"])}}}
+
+    def _upsert_special(self, path, special, remote, force):
+        self.store.db.execute("INSERT OR IGNORE INTO calendar_special_cache VALUES(?,?,?)", (special["id"], uuid4().hex, ""))
+        for _ in range(3):
+            cached = self.store.db.execute("SELECT * FROM calendar_special_cache WHERE special_id=?", (special["id"],)).fetchone()
+            event = self.special_event(special, cached["event_id"])
+            signature = hashlib.sha256(json.dumps([self.store.get("google_calendar_id"), event], sort_keys=True).encode()).hexdigest()
+            if not force and cached["signature"] == signature and event["id"] in remote:
+                return event["id"], 0
+            event_path = path + "/" + event["id"]
+            status, _ = self.client.request("PUT" if event["id"] in remote else "POST", event_path if event["id"] in remote else path, event)
+            if status == 409:
+                found, existing = self.client.request("GET", event_path + "?fields=id,extendedProperties")
+                if found == 200 and isinstance(existing, dict) and self._special_id(existing) == special["id"]:
+                    status, _ = self.client.request("PUT", event_path, event)
+                elif found in (404,410) or found == 200:
+                    status = 410
+                else:
+                    raise PlanError(f"Could not verify projected special-event identity (status {found}).")
+            if status in (404,410):
+                self.store.db.execute("UPDATE calendar_special_cache SET event_id=?,signature='' WHERE special_id=?", (uuid4().hex, special["id"]))
+                continue
+            if status not in (200,201):
+                raise PlanError(f"Google special-event sync failed (status {status}); changes remain saved.")
+            self.store.db.execute("UPDATE calendar_special_cache SET signature=? WHERE special_id=?", (signature, special["id"]))
+            return event["id"], 1
+        raise PlanError("Could not repair a deleted Google special event. Retry synchronization.")
+
     def sync(self, horizon=60, force=False):
         self._check_target()
         if not self.plan.config.handover_confirmed:
@@ -306,9 +353,11 @@ class CalendarSync:
             raise PlanError("Google Calendar is not connected. Run calendar-connect first.")
         path = "/calendars/" + quote(calendar_id, safe="") + "/events"
         remote = self.owned_events(path)
+        remote_specials = self.owned_events(path, specials=True)
         with self.store.transaction():
             version = self.store.db.execute("SELECT max(id) FROM plan_versions").fetchone()[0]
             desired = self.periods(horizon, remote)
+            specials = self.plan.special_events()
         active, count = set(), 0
         # Publish replacements first; a failed upload must leave older events available.
         for period in desired:
@@ -323,6 +372,19 @@ class CalendarSync:
         for row in self.store.db.execute("SELECT event_id FROM calendar_period_cache").fetchall():
             if row["event_id"] not in active:
                 self.store.db.execute("DELETE FROM calendar_period_cache WHERE event_id=?", (row["event_id"],))
+        special_active = set()
+        for special in specials:
+            event_id, changed = self._upsert_special(path, special, remote_specials, force)
+            special_active.add(event_id)
+            count += changed
+        for event_id in sorted(set(remote_specials) - special_active):
+            status, _ = self.client.request("DELETE", path + "/" + event_id)
+            if status not in (200,204,404,410):
+                raise PlanError(f"Could not remove an obsolete managed Google special event (status {status}).")
+            count += status in (200,204)
+        for row in self.store.db.execute("SELECT event_id FROM calendar_special_cache").fetchall():
+            if row["event_id"] not in special_active:
+                self.store.db.execute("DELETE FROM calendar_special_cache WHERE event_id=?", (row["event_id"],))
         self.store.db.execute("DELETE FROM calendar_cache")
         newer = self.store.db.execute("SELECT max(id) FROM plan_versions").fetchone()[0]
         self.store.set("calendar_dirty", "1" if newer != version else "0")

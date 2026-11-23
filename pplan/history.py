@@ -132,7 +132,8 @@ def confirm_restore(plan, actor, preview_id):
             current=plan.store.db.execute("SELECT revision FROM special_events WHERE id=?",(row["id"],)).fetchone()
             next_revision=max(row["revision"],current["revision"] if current else 0)+1
             columns=("id","actor","start","end","title","created","removed","description","color")
-            values=tuple(row[key] for key in columns)+(next_revision,)
+            from pplan.colors import google_color
+            values=tuple(google_color(row[key])["color"] if key=="color" else row[key] for key in columns)+(next_revision,)
             plan.store.db.execute("INSERT INTO special_events(id,actor,start,end,title,created,removed,description,color,revision) VALUES(?,?,?,?,?,?,?,?,?,?) "
                                   "ON CONFLICT(id) DO UPDATE SET actor=excluded.actor,start=excluded.start,end=excluded.end,title=excluded.title,"
                                   "created=excluded.created,removed=excluded.removed,description=excluded.description,color=excluded.color,revision=excluded.revision",values)

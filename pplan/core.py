@@ -11,6 +11,8 @@ import sqlite3
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from pplan.colors import DEFAULT_SPECIAL, google_color
+
 
 class PlanError(ValueError):
     """An actionable error that is safe to display to the operator."""
@@ -191,6 +193,9 @@ class Store:
                 period_key TEXT PRIMARY KEY, event_id TEXT UNIQUE NOT NULL, signature TEXT NOT NULL,
                 start TEXT NOT NULL, end TEXT NOT NULL, children TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS calendar_special_cache (
+                special_id INTEGER PRIMARY KEY, event_id TEXT UNIQUE NOT NULL, signature TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS calendar_cache (
                 key TEXT PRIMARY KEY, signature TEXT NOT NULL
             );
@@ -204,6 +209,16 @@ class Store:
                                       ("revision", "INTEGER NOT NULL DEFAULT 1")):
                 if name not in event_columns:
                     self.db.execute(f"ALTER TABLE special_events ADD COLUMN {name} {declaration}")
+        self.db.executescript("""
+            CREATE TRIGGER IF NOT EXISTS special_event_dirty_insert AFTER INSERT ON special_events BEGIN
+                INSERT INTO settings(key,value) VALUES('calendar_dirty','1')
+                ON CONFLICT(key) DO UPDATE SET value='1';
+            END;
+            CREATE TRIGGER IF NOT EXISTS special_event_dirty_update AFTER UPDATE ON special_events BEGIN
+                INSERT INTO settings(key,value) VALUES('calendar_dirty','1')
+                ON CONFLICT(key) DO UPDATE SET value='1';
+            END;
+        """)
         if str(path) != ":memory:":
             Path(path).chmod(0o600)
 
@@ -339,8 +354,8 @@ class Plan:
             if row:
                 return dict(row)
             cursor = self.store.db.execute(
-                "INSERT INTO special_events(actor, start, end, title, created) VALUES (?, ?, ?, ?, ?)",
-                (actor, start.isoformat(), end.isoformat(), title, self.clock().isoformat()),
+                "INSERT INTO special_events(actor, start, end, title, created, color) VALUES (?, ?, ?, ?, ?, ?)",
+                (actor, start.isoformat(), end.isoformat(), title, self.clock().isoformat(), DEFAULT_SPECIAL),
             )
             self._record_version(actor, "special_created", str(cursor.lastrowid))
             return dict(self.store.db.execute("SELECT * FROM special_events WHERE id=?", (cursor.lastrowid,)).fetchone())
@@ -361,7 +376,7 @@ class Plan:
         if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
             raise PlanError("Choose a color in #RRGGBB format.")
         values = {"start": start.isoformat(), "end": end.isoformat(), "title": title.strip(),
-                  "description": description.strip(), "color": color.lower()}
+                  "description": description.strip(), "color": google_color(color)["color"]}
         with self.store.transaction():
             self.authorize(actor)
             row = self.store.db.execute("SELECT * FROM special_events WHERE id=? AND removed IS NULL", (event_id,)).fetchone()

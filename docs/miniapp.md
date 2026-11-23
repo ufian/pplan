@@ -87,3 +87,5 @@ Run `docker compose exec -T bot python -m unittest discover -s /app/tests -q` on
 Check `docker compose ps`, `systemctl status pplan-tunnel`, the public HTTPS `/health`, and an unsigned POST to `/api/calendar` (must return 401). Test signed access without printing initData or family data. Check the certificate timer with `systemctl list-timers pplan-cert-renew.timer`.
 
 Recovery: keep the NAS database and its normal backups, recreate only the proxy host, issue a new HTTPS certificate, install the tunnel public key, update DNS and the pinned SSH host key if needed, and restart the tunnel. No parenting-plan export or database restore to the public host is required.
+
+Special-event colors use the shared 11-color Google event palette. Parent swatches use Basil and Tangerine in configured parent order. The editor offers named colors and matching swatch buttons; saved colors are projected to Google by standard color ID. Existing custom colors are aligned with a history entry. See [Google Calendar setup](google-calendar.md#shared-event-colors).

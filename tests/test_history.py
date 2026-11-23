@@ -49,7 +49,7 @@ class HistoryTests(Fixture):
         self.assertEqual(self.plan.schedule(self.start,date(2026,12,6)),expected)
         events=self.plan.special_events()
         self.assertEqual(len(events),1)
-        self.assertEqual((events[0]['id'],events[0]['title'],events[0]['color'],events[0]['description']),(event['id'],'Original','#7845a6',''))
+        self.assertEqual((events[0]['id'],events[0]['title'],events[0]['color'],events[0]['description']),(event['id'],'Original','#dbadff',''))
         self.assertGreater(events[0]['revision'],event['revision'])
         self.assertFalse(self.plan.has_access(99))
         self.assertEqual(self.plan.request(pending['id'])['status'],'cancelled')

@@ -26,7 +26,7 @@ docker compose up -d --no-deps --force-recreate bot
 
 Connection checks `events.list` with `fields=accessRole`, without downloading existing event details or changing the calendar. It requires `writer` or `owner` access before saving the connection. No new calendar is created. The client rejects requests outside the configured calendar's event routes, calendar creation, and requests outside this app's event-ID format. Obsolete events are deleted only after checking the private plan marker and recognizing the schedule-event format. Only the bot's projected events are updated; unrelated calendar events are retained. An existing connection is never silently switched to another Calendar ID: both connection and sync refuse a configuration mismatch.
 
-The normal sync still projects confirmed child assignments; special-event annotations are not exported yet. Use `/status` to see connection and retry state. A sharing removal or key revocation produces a sync error while the confirmed NAS plan remains intact.
+The sync projects confirmed child assignments and active special-event annotations. Specials use one all-day event for their inclusive date range (Google receives an exclusive end date), including title, description and standard event color. Removed specials are removed from Google on the next sync. Use `/status` to see connection and retry state. A sharing removal or key revocation produces a sync error while the confirmed NAS plan remains intact.
 
 References: [Google service-account authentication](https://developers.google.com/identity/protocols/oauth2/service-account), [Calendar sharing roles](https://developers.google.com/workspace/calendar/api/concepts/sharing), [events.list accessRole](https://developers.google.com/workspace/calendar/api/v3/reference/events/list).
 
@@ -64,6 +64,12 @@ docker compose restart bot
 
 The restart enables automatic sync after a token/calendar connection is added. The dedicated calendar can be shared with the other parent manually in Google Calendar; sharing is not required to use the bot.
 
+## Shared event colors
+
+The Mini App, generated calendar images and Google projection use one standard Calendar v3 event palette. Parent colors follow configured parent order: Basil (`10`) and Tangerine (`6`). Specials default to Grape (`3`) and can select any of the 11 standard colors. The API palette's HEX swatches are kept in `pplan/colors.py`; Google clients may theme their displayed shades differently. No custom labels, calendar metadata scope or sharing-management role is needed. See [event color IDs](https://developers.google.com/workspace/calendar/api/v3/reference/colors).
+
+Existing custom special shades are aligned once to the closest supported hue, preserving the prior history snapshot and recording `palette_aligned`. Old history remains immutable; restoring it uses the supported equivalent color. Annotation edits mark the Google projection dirty, including edits through the restricted Mini App writer. Parenting assignments and pending confirmations are preserved by color alignment.
+
 ## Behavior and recovery
 
 - Consecutive dates with the same parent form one timed event per child. Runs with identical parent, start and end are combined into one event naming both children. Distinct runs stay separate; a long run is not fragmented just because the other child has an exception. Exact configured handover boundaries and timezone are preserved across DST.
@@ -76,4 +82,4 @@ The restart enables automatic sync after a token/calendar connection is added. T
 
 Creation and updates use Google's documented [Calendar creation](https://developers.google.com/workspace/calendar/api/v3/reference/calendars/insert) and [event update](https://developers.google.com/workspace/calendar/api/v3/reference/events/update) endpoints. Event identifiers follow Google's [event ID requirements](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert).
 
-The NAS keeps the active run-to-event mapping in `calendar_period_cache`. Google projection cache updates do not change the parenting schedule, event annotations, pending confirmations, or plan-history versions. A schedule change during a slow upload leaves the dirty flag set for a follow-up sync.
+The NAS keeps the active run-to-event mapping in `calendar_period_cache` and special mappings in `calendar_special_cache`. Google projection cache updates do not change the parenting schedule, event annotations, pending confirmations, or plan-history versions. A schedule change during a slow upload leaves the dirty flag set for a follow-up sync.

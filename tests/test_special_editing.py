@@ -24,7 +24,7 @@ class SpecialEditingTests(Fixture):
         before = self.plan.schedule(self.start, date(2026,12,6))
         edited = self.edit(event, start=date(2026,12,1), end=date(2026,12,4), title="Trip", description="First line\nSecond line", color="#2563EB")
         self.assertEqual((edited["id"], edited["created"]), (event["id"], event["created"]))
-        self.assertEqual((edited["color"],edited["description"],edited["revision"]),("#2563eb","First line\nSecond line",2))
+        self.assertEqual((edited["color"],edited["description"],edited["revision"]),("#5484ed","First line\nSecond line",2))
         self.assertEqual(self.plan.schedule(self.start,date(2026,12,6)),before)
         self.assertEqual(self.plan.special_events(self.start,self.start),[])
         self.assertEqual(self.store.db.execute("SELECT status FROM requests WHERE id=?",(pending["id"],)).fetchone()[0],"draft")
@@ -83,7 +83,7 @@ class SpecialEditingTests(Fixture):
         pages=calendar_pages(self.start,date(2026,11,29))
         x,y,_,_=image_layout(pages)["panels"][0]
         with Image.open(BytesIO(render_calendar(self.plan,self.start,date(2026,11,29)))) as image:
-            self.assertEqual(image.getpixel((x+2*148-2,y+88-1)),ImageColor.getrgb("#2563eb"))
+            self.assertEqual(image.getpixel((x+2*148-2,y+88-1)),ImageColor.getrgb("#5484ed"))
 
     def test_editor_connection_cannot_write_assignments_rules_settings_or_requests(self):
         with tempfile.TemporaryDirectory() as tmp:

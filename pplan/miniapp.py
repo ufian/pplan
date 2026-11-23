@@ -15,6 +15,7 @@ import sqlite3
 import time
 from urllib.parse import parse_qsl, urlsplit
 
+from pplan.colors import PALETTE, parent_palette
 from pplan.core import Config, Plan, PlanError, SpecialEventConflict, Store
 
 ASSETS = Path(__file__).with_name("web")
@@ -34,6 +35,9 @@ def event_write_authorizer(action, table, column, database, source):
     if action == sqlite3.SQLITE_READ and table in {"settings", "special_events", "family_members", "overrides", "cycles", "plan_versions"}:
         return sqlite3.SQLITE_OK
     if action == sqlite3.SQLITE_UPDATE and table == "special_events" and column in {"start", "end", "title", "description", "color", "revision"}:
+        return sqlite3.SQLITE_OK
+    if table == "settings" and source in {"special_event_dirty_insert", "special_event_dirty_update"} and (
+            action == sqlite3.SQLITE_INSERT or action == sqlite3.SQLITE_UPDATE and column == "value"):
         return sqlite3.SQLITE_OK
     if action == sqlite3.SQLITE_INSERT and table in {"audit", "plan_versions"}:
         return sqlite3.SQLITE_OK
@@ -108,6 +112,7 @@ def calendar_data(plan, month):
                            "events": [event_data(e) for e in events if e["start"] <= day.isoformat() <= e["end"]]})
     return {"month": month, "today": plan.today().isoformat(), "timezone": plan.config.timezone,
             "parents": plan.config.parents, "children": plan.config.children,
+            "palette": PALETTE, "parent_colors": {p: c["color"] for p,c in parent_palette(plan.config.parents).items()},
             "handover_confirmed": plan.config.handover_confirmed,
             "days": result, "totals": plan.overnight_totals(first, last),
             "year_totals": plan.overnight_totals(date(first.year, 1, 1), last)}
