@@ -17,6 +17,8 @@ HELP = """Commands:
 /improve <request> — request a change to the app
 /improvements — app improvement status
 /status — calendar sync status
+/history — owner: list saved family-plan versions
+/restore VERSION — owner: preview and confirm a restoration
 /invite [parent] — owner: create a one-time second-parent code
 /join CODE — connect using an invitation
 /access — owner: show connected parent

@@ -26,16 +26,16 @@ def event_data(event):
 
 
 def event_write_authorizer(action, table, column, database, source):
-    """The editor connection can only update events and append audit entries."""
+    """The editor can update events and append audit/history, never rewrite schedule or history."""
     allowed = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
                sqlite3.SQLITE_FUNCTION}
     if action in allowed:
         return sqlite3.SQLITE_OK
-    if action == sqlite3.SQLITE_READ and table in {"settings", "special_events", "family_members"}:
+    if action == sqlite3.SQLITE_READ and table in {"settings", "special_events", "family_members", "overrides", "cycles", "plan_versions"}:
         return sqlite3.SQLITE_OK
     if action == sqlite3.SQLITE_UPDATE and table == "special_events" and column in {"start", "end", "title", "description", "color", "revision"}:
         return sqlite3.SQLITE_OK
-    if action == sqlite3.SQLITE_INSERT and table == "audit":
+    if action == sqlite3.SQLITE_INSERT and table in {"audit", "plan_versions"}:
         return sqlite3.SQLITE_OK
     return sqlite3.SQLITE_DENY
 
@@ -61,7 +61,7 @@ def update_event(config, database, body, actor=None):
 
 
 def authorize_init_data(raw, token, operator=None, now=None):
-    """Verify Telegram's HMAC, freshness and the configured operator allowlist."""
+    """Verify Telegram's HMAC and freshness; the request handler checks current family membership."""
     try:
         if not isinstance(raw, str) or not 0 < len(raw) <= 12000:
             raise ValueError()

@@ -164,6 +164,16 @@ class Store:
                 status TEXT NOT NULL DEFAULT 'queued', created TEXT NOT NULL,
                 updated TEXT NOT NULL, result TEXT
             );
+            CREATE TABLE IF NOT EXISTS plan_versions (
+                id INTEGER PRIMARY KEY, actor INTEGER NOT NULL, action TEXT NOT NULL,
+                reference TEXT, created TEXT NOT NULL, config_fingerprint TEXT NOT NULL,
+                state TEXT NOT NULL, state_hash TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS restore_previews (
+                id TEXT PRIMARY KEY, actor INTEGER NOT NULL, version_id INTEGER NOT NULL,
+                base_hash TEXT NOT NULL, created TEXT NOT NULL, expires TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft'
+            );
             CREATE TABLE IF NOT EXISTS family_members (
                 telegram_id INTEGER PRIMARY KEY, parent_id TEXT NOT NULL,
                 joined TEXT NOT NULL, revoked TEXT
@@ -241,6 +251,8 @@ class Plan:
             store.set("config_fingerprint", config.fingerprint())
             if not store.get("plan_id"):
                 store.set("plan_id", uuid4().hex)
+            from pplan.history import ensure_baseline
+            ensure_baseline(self)
 
     def today(self):
         return self.clock().astimezone(ZoneInfo(self.config.timezone)).date()
@@ -326,6 +338,7 @@ class Plan:
                 "INSERT INTO special_events(actor, start, end, title, created) VALUES (?, ?, ?, ?, ?)",
                 (actor, start.isoformat(), end.isoformat(), title, self.clock().isoformat()),
             )
+            self._record_version(actor, "special_created", str(cursor.lastrowid))
             return dict(self.store.db.execute("SELECT * FROM special_events WHERE id=?", (cursor.lastrowid,)).fetchone())
 
     def update_special(self, actor, event_id, start, end, title, description, color, *, expected_revision):
@@ -361,6 +374,7 @@ class Plan:
             )
             self.store.db.execute("INSERT INTO audit(request_id, actor, action, at) VALUES (?, ?, ?, ?)",
                                   (f"special:{event_id}", actor, "special_updated", self.clock().isoformat()))
+            self._record_version(actor, "special_updated", str(event_id))
             return dict(self.store.db.execute("SELECT * FROM special_events WHERE id=?", (event_id,)).fetchone())
 
     def remove_special(self, actor, event_id):
@@ -370,7 +384,8 @@ class Plan:
             row = self.store.db.execute("SELECT * FROM special_events WHERE id=? AND removed IS NULL", (event_id,)).fetchone()
             if not row:
                 raise PlanError("Special event not found.")
-            self.store.db.execute("UPDATE special_events SET removed=? WHERE id=?", (self.clock().isoformat(), event_id))
+            self.store.db.execute("UPDATE special_events SET removed=?, revision=revision+1 WHERE id=?", (self.clock().isoformat(), event_id))
+            self._record_version(actor, "special_removed", str(event_id))
             return dict(row)
 
     def _validate_dates(self, start, end):
@@ -520,6 +535,7 @@ class Plan:
             self.store.db.execute("UPDATE requests SET status='confirmed' WHERE id=?", (request_id,))
             self._audit(request_id, actor, "confirmed")
             self.store.set("calendar_dirty", "1")
+            self._record_version(actor, "schedule_confirmed", request_id)
             return self.request(request_id)
 
     def cancel(self, actor, request_id):
@@ -531,6 +547,10 @@ class Plan:
                 raise PlanError("Only your draft requests can be cancelled.")
             self.store.db.execute("UPDATE requests SET status='cancelled' WHERE id=?", (request_id,))
             self._audit(request_id, actor, "cancelled")
+
+    def _record_version(self, actor, action, reference=None):
+        from pplan.history import record_change
+        return record_change(self, actor, action, reference)
 
     def _audit(self, request_id, actor, action):
         self.store.db.execute("INSERT INTO audit(request_id, actor, action, at) VALUES (?, ?, ?, ?)",

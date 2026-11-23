@@ -8,6 +8,7 @@ Each child has an independent assignment. A handover date labels the period from
 
 - A repeating baseline, confirmed child-specific exceptions, and future-dated repeating schedule changes.
 - A private Telegram bot for the configured owner and one second parent connected with a one-time invitation.
+- Automatic versions of confirmed schedule changes and special-event edits, with owner-confirmed restoration.
 - Free-form messages interpreted by Codex CLI with ChatGPT subscription authentication.
 - Exact previews with children, parent, date range, times, and timezone; changes apply only after **your** confirmation.
 - Multiple periods and repeating rules from one message, with one atomic confirmation for the full action list.
@@ -75,6 +76,12 @@ Assign YYYY-MM-DD to <configured parent> for <configured child>
 ```
 
 Natural-language messages may be in any language. The bot's interface, clarification questions, documentation, and code are in English.
+
+## Change history and recovery
+
+The bot saves a complete version of the schedule exceptions, repeating rules, and special events when they change. `/history` (owner only) lists recent versions with their author, action, and timestamp. `/restore VERSION` shows a preview; only the owner's **Restore version** button applies it. The preview expires after 15 minutes or becomes stale after another data change.
+
+Restoration recovers the full shared plan and special events, including past periods, and saves a new history version rather than deleting later history. It cancels pending schedule previews and refreshes revision markers so old confirmation/editor forms cannot overwrite restored data. Access and invitation state are never restored: use `/revoke` first if an account may be compromised, then restore the desired version. This history is private NAS data; it supplements, and does not replace, separate NAS backups. Older changes made before this feature was installed have no reconstructable versions; the migration saves the current plan as its initial baseline.
 
 ## Codex subscription
 

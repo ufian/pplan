@@ -14,6 +14,7 @@ from uuid import uuid4
 from pplan.access import create_invite, redeem_invite, revoke_access
 from pplan.ai import context_for
 from pplan.core import PlanError
+from pplan.history import list_versions, prepare_restore, confirm_restore, cancel_restore
 from pplan.parser import HELP, parse_request
 
 log = logging.getLogger(__name__)
@@ -159,7 +160,13 @@ class Bot:
                         self.plan.authorize(actor)
                         if callback:
                             action, request_id = callback.get("data", "").split(":", 1)
-                            if action == "invite":
+                            if action == "restore_confirm":
+                                version = confirm_restore(self.plan, actor, request_id)
+                                self.say(actor, f"Family schedule and special events restored. Saved as version #{version}. Pending schedule previews were cancelled; membership and invitation access were not changed. Use /schedule for the restored calendar.")
+                            elif action == "restore_cancel":
+                                cancel_restore(self.plan, actor, request_id)
+                                self.say(actor, "Restore cancelled. The plan is unchanged.")
+                            elif action == "invite":
                                 self.invite(actor, request_id)
                             elif action == "confirm":
                                 self.plan.confirm(actor, request_id)
@@ -246,7 +253,28 @@ class Bot:
         self.plan.authorize(actor)
         parts = text.split()
         command = parts[0].split("@")[0]
-        if command == "/invite":
+        if command == "/history":
+            if len(parts) != 1:
+                raise PlanError("Use /history for recent versions, then /restore VERSION to preview an older version.")
+            versions = list_versions(self.plan, actor)
+            lines = ["Saved family-plan versions (newest first):"]
+            for version in versions:
+                author = "owner" if version["actor"] == self.plan.config.operator_telegram_id else f"Telegram ID {version['actor']}"
+                lines.append(f"#{version['id']} · {version['created']} · {version['action']} · {author}")
+            self.say(actor, "\n".join(lines) + "\n\nUse /restore VERSION to preview a restoration. Access is managed separately with /revoke.")
+        elif command == "/restore":
+            self.plan.authorize_owner(actor)
+            if len(parts) != 2:
+                raise PlanError("Use /restore VERSION with a number from /history.")
+            preview = prepare_restore(self.plan, actor, int(parts[1]))
+            text = (f"Restore preview · version #{preview['version_id']}\nSaved: {preview['created']}\n\n"
+                    + "\n".join(preview["changes"])
+                    + f"\n\nAll pending schedule previews will be cancelled ({preview['pending']} currently)."
+                    + "\nThis restores the full shared schedule and special events, including past periods. Membership and invitations stay unchanged."
+                    + "\nNothing has changed yet. This preview expires after 15 minutes and becomes stale if the plan changes.")
+            self.say(actor, text, [{"text": "Restore version", "callback_data": "restore_confirm:" + preview["id"]},
+                                   {"text": "Cancel", "callback_data": "restore_cancel:" + preview["id"]}])
+        elif command == "/invite":
             value = text.split(maxsplit=1)[1].strip() if len(parts) > 1 else None
             aliases = {alias.casefold(): key for key, name in self.plan.config.parents.items() for alias in (key, name)}
             self.invite(actor, aliases.get(value.casefold(), value) if value else None)
