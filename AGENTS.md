@@ -8,6 +8,8 @@ The active application and source are on the user's NAS at `ufian@192.168.1.99`,
 
 The local workspace mirrors source for review. Develop and verify changes on the NAS, keeping the local mirror current. Runtime `config.json`, `.env`, `secrets/`, and `data/` stay private and must not be copied into a source bundle or committed. The NAS uses `compose.dev.yaml` with read-only source mounts, so source changes need a service restart; dependency changes need an image rebuild.
 
+After completing and verifying a code or documentation request, commit the relevant changes and push to the configured GitHub remote before finishing. Keep the NAS checkout and local mirror aligned with the published commit.
+
 ## Telegram improvement queue
 
 The user explicitly chose to implement Telegram improvement requests in this Codex chat. At the start of each work turn, and again before finishing, inspect the queue:

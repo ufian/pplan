@@ -223,8 +223,13 @@ class ImageTests(Fixture):
     def test_shared_days_draw_only_parent_and_split_days_draw_children(self):
         from PIL import ImageDraw
         original, labels = ImageDraw.ImageDraw.text, []
+        in_footer = False
         def record(draw, xy, text, *args, **kwargs):
-            labels.append(text)
+            nonlocal in_footer
+            if text.startswith("Scheduled nights"):
+                in_footer = True
+            if not in_footer:
+                labels.append(text)
             return original(draw, xy, text, *args, **kwargs)
         with patch.object(ImageDraw.ImageDraw, "text", record):
             render_calendar(self.plan, self.start, self.start)
@@ -233,6 +238,7 @@ class ImageTests(Fixture):
         request = self.draft()
         self.plan.confirm(42, request["id"])
         labels.clear()
+        in_footer = False
         with patch.object(ImageDraw.ImageDraw, "text", record):
             render_calendar(self.plan, self.start, self.start)
         self.assertIn("Older", labels)
@@ -258,10 +264,15 @@ class ImageTests(Fixture):
         bot = Bot(self.plan, SimpleNamespace())
         bot.handle_update({"update_id": 1, "message": {"from": {"id": 42},
                           "chat": {"id": 42, "type": "private"},
-                          "text": "/schedule 2026-11-23 2026-11-24"}})
+                          "text": "/schedule 2026-11-24 2026-11-25"}})
         jobs = [json.loads(row[0]) for row in self.store.db.execute("SELECT payload FROM outbox")]
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["method"], "sendPhoto")
+        caption = jobs[0]["payload"]["caption"]
+        self.assertIn("Since January 1 · January 1 through November 25, 2026", caption)
+        self.assertIn("Requested period · November 24 through November 25, 2026", caption)
+        self.assertIn("Older\nFirst: 3 since January 1 · 2 in requested period", caption)
+        self.assertIn("Younger\nFirst: 3 since January 1 · 2 in requested period", caption)
         self.assertTrue(base64.b64decode(jobs[0]["payload"]["photo_base64"]).startswith(b"\x89PNG"))
 
     def test_photo_upload_contains_binary_png_and_caption(self):

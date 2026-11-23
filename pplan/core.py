@@ -231,6 +231,15 @@ class Plan:
         return [(day, child, self.assignment(child, day)["parent"])
                 for day in days(start, end) for child in self.config.children]
 
+    def overnight_totals(self, start: date, end: date):
+        """Count each child's scheduled nights over an inclusive date range."""
+        totals = {child: dict.fromkeys(self.config.parents, 0) for child in self.config.children}
+        for day in days(max(start, self.config.anchor_date), end):
+            for child in totals:
+                parent = self.assignment(child, day)["parent"]
+                totals[child][parent] += 1
+        return totals
+
     def repeating_pattern(self, child, day=None):
         if child not in self.config.children:
             raise PlanError("Unknown child.")
